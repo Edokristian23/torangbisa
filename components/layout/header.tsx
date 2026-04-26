@@ -47,8 +47,10 @@ const Header = ({ session, onToggleSidebar, title, subTitle }: HeaderProps) => {
 
   const handleLogout = async () => {
     await signOut({
-      callbackUrl: "/login",
+      redirect: false,
     });
+
+    window.location.href = "/login";
   };
 
   useEffect(() => {
