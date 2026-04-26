@@ -20,6 +20,7 @@ const DashboardClient = ({ session }: any) => {
         />
         <div className="flex-1 flex flex-col overflow-hidden">
           <Header
+          session={session}
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
             title="Dashboard"

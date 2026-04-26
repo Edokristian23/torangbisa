@@ -61,7 +61,7 @@ export function canMutateAssessment(role: UserRole, status: AssessmentStatus) {
 export function canReviewAssessment(role: UserRole, status: AssessmentStatus) {
   if (!canReview(role)) return false;
 
-  if (role === 'BLUD_ADMIN' || role === 'BPKP') {
+  if (role === 'BLUD_ADMIN' || role === 'BPKP_ADMIN') {
     return status === 'SUBMITTED' || status === 'IN_REVIEW';
   }
 
@@ -143,7 +143,7 @@ export function allowedNextStatuses(role: UserRole, status: AssessmentStatus) {
 
   // BPKP:
   // - review assessment dari admin
-  if (role === 'BPKP') {
+  if (role === 'BPKP_ADMIN') {
     if (status === 'SUBMITTED') {
       return [
         'IN_REVIEW',
