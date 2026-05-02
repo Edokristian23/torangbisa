@@ -1,0 +1,248 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  BPKP_ADMIN
+  BPKP_REVIEWER
+  BLUD_ADMIN
+  BLUD_OPERATOR
+  AUDITOR
+}
+
+enum AssessmentStatus {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  REVISION_REQUESTED
+  APPROVED
+  REJECTED
+}
+
+enum AuditSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum StorageProvider {
+  DATABASE
+}
+
+model Blud {
+  id                String             @id @default(cuid())
+  code              String             @unique
+  name              String             @unique
+  region            String?
+  isActive          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  users             User[]
+  assessmentPeriods AssessmentPeriod[]
+}
+
+model User {
+  id                        String               @id @default(cuid())
+  username                  String               @unique
+  email                     String?              @unique
+  name                      String
+  password                  String
+  role                      UserRole             @default(BLUD_OPERATOR)
+  isActive                  Boolean              @default(true)
+  mustChangePassword        Boolean              @default(false)
+  failedLoginCount          Int                  @default(0)
+  lockedUntil               DateTime?
+  lastLoginAt               DateTime?
+  passwordChangedAt         DateTime?
+  bludId                    String?
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+
+  blud                      Blud?                @relation(fields: [bludId], references: [id], onDelete: SetNull)
+  uploadedDocuments         AssessmentDocument[] @relation("DocumentUploader")
+  createdAuditLogs          AuditLog[]           @relation("AuditActor")
+
+  reviewedAssessmentPeriods AssessmentPeriod[]   @relation("AssessmentReviewer")
+  submittedAssessmentPeriods AssessmentPeriod[]  @relation("AssessmentSubmitter")
+
+  reviewedAssessmentResponses AssessmentResponse[] @relation("AssessmentResponseReviewer")
+
+  createdFollowUpEntries    FollowUpEntry[]      @relation("FollowUpCreator")
+}
+
+model AssessmentPeriod {
+  id            String               @id @default(cuid())
+  year          Int
+  moduleKey     String
+  status        AssessmentStatus     @default(DRAFT)
+  bludId        String
+
+  submittedAt   DateTime?
+  submittedById String?
+
+  reviewedAt    DateTime?
+  reviewedById  String?
+  reviewerNotes String?
+
+  approvedAt    DateTime?
+  rejectedAt    DateTime?
+
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  blud          Blud                 @relation(fields: [bludId], references: [id], onDelete: Cascade)
+
+  submittedBy   User?                @relation("AssessmentSubmitter", fields: [submittedById], references: [id], onDelete: SetNull)
+  reviewedBy    User?                @relation("AssessmentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  responses     AssessmentResponse[]
+  documents     AssessmentDocument[]
+
+  @@unique([bludId, year, moduleKey])
+  @@index([year, moduleKey])
+  @@index([status, year])
+  @@index([submittedById])
+  @@index([reviewedById])
+}
+
+model AssessmentResponse {
+  id                 String                       @id @default(cuid())
+  assessmentPeriodId String
+  parameterId        Int
+  parameterLabel     String
+  criteriaCode       String
+  criteriaLabel      String
+  criteriaScore      Decimal                      @db.Decimal(10, 2)
+  aoi                String
+  sortOrder          Int                          @default(0)
+
+  reviewStatus       String                       @default("pending") // pending | accepted | rejected
+  reviewNotes        String?
+  reviewedAt         DateTime?
+  reviewedById       String?
+
+  createdByRole      String?
+  createdByName      String?
+
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+
+  // ✅ TAMBAHAN WAJIB
+  isRevision             Boolean? @default(false)
+  revisionNumber         Int?
+  previousCriteriaCode   String?
+  previousCriteriaLabel  String?
+  previousCriteriaScore  Decimal? @db.Decimal(10, 2)
+  previousAoi            String?
+  previousDocuments      Json?
+
+  assessmentPeriod   AssessmentPeriod             @relation(fields: [assessmentPeriodId], references: [id], onDelete: Cascade)
+  reviewedBy         User?                        @relation("AssessmentResponseReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  documentLinks      AssessmentResponseDocument[]
+  followUps          FollowUpEntry[]
+
+  @@index([assessmentPeriodId])
+  @@index([parameterId])
+  @@index([sortOrder])
+  @@index([reviewStatus])
+  @@index([reviewedById])
+}
+
+model AssessmentDocument {
+  id                 String                       @id @default(cuid())
+  assessmentPeriodId String
+  uploadedById       String?
+  sourceParameter    String?
+  name               String
+  originalName       String
+  mimeType           String
+  fileExtension      String?
+  fileSize           Int
+  storageProvider    StorageProvider              @default(DATABASE)
+  checksumSha256     String?
+  fileData           Bytes
+  isMaster           Boolean                      @default(false)
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+
+  assessmentPeriod   AssessmentPeriod             @relation(fields: [assessmentPeriodId], references: [id], onDelete: Cascade)
+  uploadedBy         User?                        @relation("DocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  responseLinks      AssessmentResponseDocument[]
+  followUpLinks      FollowUpEntryDocument[]
+
+  @@index([assessmentPeriodId])
+  @@index([isMaster])
+}
+
+model AssessmentResponseDocument {
+  responseId String
+  documentId String
+  createdAt  DateTime @default(now())
+
+  response AssessmentResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  document AssessmentDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([responseId, documentId])
+  @@index([documentId])
+  @@index([responseId])
+}
+
+model FollowUpEntry {
+  id                   String                  @id @default(cuid())
+  assessmentResponseId String
+  description          String
+  sortOrder            Int                     @default(0)
+  createdById          String?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  assessmentResponse   AssessmentResponse      @relation(fields: [assessmentResponseId], references: [id], onDelete: Cascade)
+  createdBy            User?                   @relation("FollowUpCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  documents            FollowUpEntryDocument[]
+
+  @@index([assessmentResponseId])
+  @@index([createdById])
+}
+
+model FollowUpEntryDocument {
+  followUpEntryId String
+  documentId      String
+  createdAt       DateTime @default(now())
+
+  followUpEntry FollowUpEntry      @relation(fields: [followUpEntryId], references: [id], onDelete: Cascade)
+  document      AssessmentDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([followUpEntryId, documentId])
+  @@index([documentId])
+  @@index([followUpEntryId])
+}
+
+model AuditLog {
+  id            String        @id @default(cuid())
+  actorId       String?
+  action        String
+  entityType    String
+  entityId      String
+  severity      AuditSeverity @default(INFO)
+  ipAddress     String?
+  userAgent     String?
+  requestId     String?
+  previousState Json?
+  nextState     Json?
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+
+  actor         User?         @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
+  @@index([actorId, createdAt])
+}
