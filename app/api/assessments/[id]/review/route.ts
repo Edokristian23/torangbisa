@@ -47,6 +47,22 @@ async function assertReviewAccess(responseId: string, session: any) {
   }
 
   if (role === "BPKP" || role === "BPKP_ADMIN" || role === "BPKP_REVIEWER") {
+    const createdByRole = String(
+      response.createdByRole || "BLUD_OPERATOR",
+    ).toUpperCase();
+
+    if (["BPKP", "BPKP_ADMIN", "BPKP_REVIEWER"].includes(createdByRole)) {
+      return {
+        error: NextResponse.json(
+          {
+            message:
+              "Data input DA Admin BPKP tidak masuk workflow review isian BLUD.",
+          },
+          { status: 409 },
+        ),
+      };
+    }
+
     if (
       !["SUBMITTED", "IN_REVIEW", "REVISION_REQUESTED"].includes(periodStatus)
     ) {

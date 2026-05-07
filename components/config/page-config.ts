@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   BarChart3,
+  BookOpenCheck,
   ClipboardCheck,
   ClipboardList,
   Crown,
@@ -78,6 +79,18 @@ export const PAGE_CONFIG: Record<string, PageConfigItem> = {
     title: "Hasil",
     subTitle: "Tindak Lanjut AOI",
     icon: ClipboardCheck,
+  },
+
+  "tindak-lanjut": {
+    title: "Tindak Lanjut",
+    subTitle: "Pengelolaan tindak lanjut hasil self assessment",
+    icon: ClipboardCheck,
+  },
+
+  panduan: {
+    title: "Panduan",
+    subTitle: "Dokumen panduan aplikasi dan self assessment",
+    icon: BookOpenCheck,
   },
 
   user: {

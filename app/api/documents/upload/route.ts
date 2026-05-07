@@ -67,18 +67,31 @@ export async function POST(request: Request) {
       const buffer = Buffer.from(arrayBuffer);
       const checksumSha256 = hashBuffer(buffer);
 
-      // Nama final yang tetap dipakai untuk penyimpanan agar fungsi lama tidak berubah
+      // Nama final tetap sama seperti flow existing agar fungsi lama tidak berubah.
       const displayName = files.length > 1 ? `${customName} ${index + 1}` : customName;
 
       /**
-       * FIX:
-       * - Tetap cek displayName (perilaku lama dipertahankan)
-       * - Tetap cek originalName/file.name (perilaku lama dipertahankan)
-       * - Tambah cek customName mentah agar nama dokumen input tidak boleh sama
+       * FIX GLOBAL EXISTING DOCUMENT:
+       * Sebelumnya existing document dicek berdasarkan assessmentPeriodId.
+       * Karena assessmentPeriodId unik per BLUD + tahun + moduleKey, dokumen
+       * yang sudah ada di modul lain tidak terbaca sebagai existing.
+       *
+       * Sekarang cek existing dibuat global per BLUD + tahun melalui relasi
+       * assessmentPeriod.bludId dan assessmentPeriod.year, tanpa membatasi moduleKey.
+       *
+       * Dampak:
+       * - Upload modul berbeda pada BLUD dan tahun yang sama tetap mendeteksi
+       *   nama dokumen / nama file yang sudah pernah ada.
+       * - Operator BLUD, Admin BLUD, dan Admin BPKP tetap memakai isolasi BLUD + tahun.
+       * - Proses penyimpanan dokumen tetap memakai assessmentPeriod modul aktif,
+       *   jadi relasi dokumen ke modul yang sedang dibuka tidak berubah.
        */
       const existingDocument = await prisma.assessmentDocument.findFirst({
         where: {
-          assessmentPeriodId: assessmentPeriod.id,
+          assessmentPeriod: {
+            bludId,
+            year,
+          },
           OR: [
             { name: customName },
             { name: displayName },

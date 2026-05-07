@@ -5,6 +5,54 @@ import { hashBuffer } from "@/lib/storage";
 import { createAuditLog } from "@/lib/audit";
 import { isAdminRole } from "@/lib/authz";
 
+const BPKP_ROLES = ["BPKP", "BPKP_ADMIN", "BPKP_REVIEWER"];
+
+function normalizeRole(role?: string | null) {
+  return String(role || "").toUpperCase();
+}
+
+function isBpkpRole(role?: string | null) {
+  return BPKP_ROLES.includes(normalizeRole(role));
+}
+
+function isBpkpOwnedResponse(createdByRole?: string | null) {
+  return BPKP_ROLES.includes(normalizeRole(createdByRole));
+}
+
+function canUseBludFilter(role?: string | null) {
+  return isBpkpRole(role) || isAdminRole(role as any);
+}
+
+async function resolveTargetBludId(
+  session: any,
+  role: string,
+  requestedBludCode?: string | null,
+) {
+  const normalizedBludCode = String(requestedBludCode || "")
+    .trim()
+    .toUpperCase();
+
+  if (canUseBludFilter(role) && normalizedBludCode) {
+    const blud = await prisma.blud.findUnique({
+      where: { code: normalizedBludCode },
+      select: { id: true },
+    });
+
+    return blud?.id || null;
+  }
+
+  return session?.user?.bludId || null;
+}
+
+type ExistingDocumentResult = {
+  id: string;
+  name: string;
+  originalName: string;
+  mimeType: string;
+  sourceParameter: string | null;
+  fileExtension: string | null;
+};
+
 const ALLOWED_EXTENSIONS = [
   "pdf",
   "png",
@@ -30,6 +78,10 @@ export async function POST(request: Request) {
       .filter((value): value is File => value instanceof File);
     const responseId = String(formData.get("responseId") || "");
     const customName = String(formData.get("customName") || "").trim();
+    const requestedYear = Number(formData.get("year") || 0);
+    const requestedBludCode = String(formData.get("bludCode") || "")
+      .trim()
+      .toUpperCase();
 
     if (!responseId || !customName || files.length === 0) {
       return NextResponse.json(
@@ -50,11 +102,51 @@ export async function POST(request: Request) {
       );
     }
 
-    if (
-      !isAdminRole(session.user.role) &&
-      response.assessmentPeriod.bludId !== session.user.bludId
-    ) {
-      return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+    const role = normalizeRole(session.user.role);
+    const responseOwnedByBpkp = isBpkpOwnedResponse(response.createdByRole);
+
+    if (isBpkpRole(role)) {
+      const targetBludId = await resolveTargetBludId(
+        session,
+        role,
+        requestedBludCode,
+      );
+
+      if (requestedYear && requestedYear !== response.assessmentPeriod.year) {
+        return NextResponse.json(
+          { message: "Tahun filter tidak sesuai dengan AOI yang dipilih." },
+          { status: 400 },
+        );
+      }
+
+      if (targetBludId && targetBludId !== response.assessmentPeriod.bludId) {
+        return NextResponse.json(
+          { message: "BLUD filter tidak sesuai dengan AOI yang dipilih." },
+          { status: 400 },
+        );
+      }
+
+
+      if (!responseOwnedByBpkp) {
+        return NextResponse.json(
+          {
+            message:
+              "Admin BPKP hanya dapat upload evidence tindak lanjut pada self assessment Admin BPKP.",
+          },
+          { status: 403 },
+        );
+      }
+    } else {
+      if (responseOwnedByBpkp) {
+        return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+      }
+
+      if (
+        !isAdminRole(session.user.role) &&
+        response.assessmentPeriod.bludId !== session.user.bludId
+      ) {
+        return NextResponse.json({ message: "Forbidden" }, { status: 403 });
+      }
     }
 
     const uploadedDocs = [];
@@ -84,21 +176,54 @@ export async function POST(request: Request) {
         files.length > 1 ? `${customName} ${index + 1}` : customName;
 
       /**
-       * Aturan duplikat disamakan dengan upload dokumen assessment:
-       * - nama dokumen input saat ini (customName) tidak boleh sama
-       * - nama final yang akan disimpan (displayName) tidak boleh sama
-       * - nama file asli juga tidak boleh sama
+       * Aturan duplikat untuk Admin BPKP dibuat berdasarkan filter BLUD + tahun.
+       * Scope ini sengaja tidak mengubah flow BLUD Operator/Admin BLUD:
+       * - BPKP: cek seluruh dokumen pada BLUD+tahun yang terhubung ke response
+       *   BPKP atau sourceParameter BPKP TL Evidence.
+       * - BLUD: tetap memakai scope period existing agar behavior lama aman.
        */
-      const existingDocument = await prisma.assessmentDocument.findFirst({
-        where: {
-          assessmentPeriodId: response.assessmentPeriodId,
-          OR: [
-            { name: customName },
-            { name: displayName },
-            { originalName: file.name },
-          ],
-        },
-      });
+      const existingDocument = responseOwnedByBpkp
+        ? (
+            await prisma.$queryRaw<ExistingDocumentResult[]>`
+              SELECT DISTINCT
+                d."id",
+                d."name",
+                d."originalName",
+                d."mimeType",
+                d."sourceParameter",
+                d."fileExtension"
+              FROM "AssessmentDocument" d
+              INNER JOIN "AssessmentPeriod" ap ON ap."id" = d."assessmentPeriodId"
+              LEFT JOIN "AssessmentResponseDocument" ard ON ard."documentId" = d."id"
+              LEFT JOIN "AssessmentResponse" ar ON ar."id" = ard."responseId"
+              LEFT JOIN "FollowUpEntryDocument" fud ON fud."documentId" = d."id"
+              LEFT JOIN "FollowUpEntry" fu ON fu."id" = fud."followUpEntryId"
+              LEFT JOIN "AssessmentResponse" fur ON fur."id" = fu."assessmentResponseId"
+              WHERE ap."bludId" = ${response.assessmentPeriod.bludId}
+                AND ap."year" = ${response.assessmentPeriod.year}
+                AND (
+                  d."name" = ${customName}
+                  OR d."name" = ${displayName}
+                  OR d."originalName" = ${file.name}
+                )
+                AND (
+                  ar."createdByRole" IN ('BPKP', 'BPKP_ADMIN', 'BPKP_REVIEWER')
+                  OR fur."createdByRole" IN ('BPKP', 'BPKP_ADMIN', 'BPKP_REVIEWER')
+                  OR d."sourceParameter" ILIKE 'BPKP TL Evidence%'
+                )
+              LIMIT 1
+            `
+          )[0] || null
+        : await prisma.assessmentDocument.findFirst({
+            where: {
+              assessmentPeriodId: response.assessmentPeriodId,
+              OR: [
+                { name: customName },
+                { name: displayName },
+                { originalName: file.name },
+              ],
+            },
+          });
 
       if (existingDocument) {
         return NextResponse.json(
@@ -124,7 +249,7 @@ export async function POST(request: Request) {
         data: {
           assessmentPeriodId: response.assessmentPeriodId,
           uploadedById: session.user.id,
-          sourceParameter: `TL Evidence - ${response.parameterLabel}`,
+          sourceParameter: `${responseOwnedByBpkp ? "BPKP TL Evidence" : "TL Evidence"} - ${response.parameterLabel}`,
           name: displayName,
           originalName: file.name,
           mimeType: file.type || "application/octet-stream",
@@ -143,6 +268,7 @@ export async function POST(request: Request) {
         entityId: document.id,
         metadata: {
           assessmentResponseId: responseId,
+          responseOwner: responseOwnedByBpkp ? "BPKP" : "BLUD",
           checksumSha256,
           fileSize: document.fileSize,
         },

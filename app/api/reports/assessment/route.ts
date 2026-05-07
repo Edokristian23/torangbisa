@@ -496,6 +496,16 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const year = Number(searchParams.get("year"));
+
+    // Support parameter dari dashboard terbaru:
+    // /api/reports/assessment?year=2026&bludIds=<bludId>
+    // Tetap backward compatible dengan parameter lama:
+    // /api/reports/assessment?year=2026&bludCode=<kodeBlud>
+    const selectedBludIds = (searchParams.get("bludIds") || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const selectedBludId = selectedBludIds[0] || "";
     const bludCode = String(searchParams.get("bludCode") || "").toUpperCase();
 
     if (!year) {
@@ -506,16 +516,27 @@ export async function GET(request: Request) {
     }
 
     const role = String(session.user.role || "").toUpperCase();
+    const canSelectBlud = [
+      "SUPER_ADMIN",
+      "BPKP_ADMIN",
+      "BPKP_REVIEWER",
+      "REVIEWER",
+      "AUDITOR",
+    ].includes(role);
+
     let bludId = session.user.bludId;
 
-    if (
-      ["SUPER_ADMIN", "BPKP_ADMIN", "BPKP_REVIEWER", "AUDITOR"].includes(
-        role,
-      ) &&
-      bludCode
-    ) {
+    if (canSelectBlud && selectedBludId) {
+      const selectedBlud = await prisma.blud.findUnique({
+        where: { id: selectedBludId },
+        select: { id: true },
+      });
+
+      bludId = selectedBlud?.id ?? null;
+    } else if (canSelectBlud && bludCode) {
       const selectedBlud = await prisma.blud.findUnique({
         where: { code: bludCode },
+        select: { id: true },
       });
 
       bludId = selectedBlud?.id ?? null;

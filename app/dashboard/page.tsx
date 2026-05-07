@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useBpkpGlobalFilterStore } from "../../stores/useBpkpGlobalFilterStore";
 
 import {
   Award,
@@ -107,6 +109,20 @@ type FollowUpInfographicRow = {
   followUpEntryCount?: number;
 };
 
+type DashboardBludFilter = {
+  id: string;
+  code: string;
+  name: string;
+};
+
+type DashboardViewer = {
+  role: string;
+  isBludScoped: boolean;
+  currentBludId: string | null;
+  currentBludName: string | null;
+  canReviewAoi: boolean;
+};
+
 type DashboardPayload = {
   summary: {
     totalResponses: number;
@@ -130,6 +146,11 @@ type DashboardPayload = {
     };
     rows: FollowUpInfographicRow[];
   };
+  filters?: {
+    bluds: DashboardBludFilter[];
+    selectedBludIds: string[];
+  };
+  viewer?: DashboardViewer;
 };
 
 const COLORS = [
@@ -140,6 +161,36 @@ const COLORS = [
   "#475569",
   "#16a34a",
 ];
+
+const DASHBOARD_DATA_CHANGED_EVENT = "enterprise-dashboard-data-changed";
+const DASHBOARD_DATA_VERSION_KEY = "enterprise-dashboard-data-version";
+
+type DashboardCacheEntry = {
+  payload: DashboardPayload;
+  dataVersion: string;
+  fetchedAt: number;
+};
+
+const dashboardCache = new Map<string, DashboardCacheEntry>();
+let rejectedSummaryCache: RejectSummaryPayload | null = null;
+let rejectedSummaryChecked = false;
+
+export function notifyEnterpriseDashboardDataChanged() {
+  if (typeof window === "undefined") return;
+
+  const version = String(Date.now());
+  localStorage.setItem(DASHBOARD_DATA_VERSION_KEY, version);
+  window.dispatchEvent(new CustomEvent(DASHBOARD_DATA_CHANGED_EVENT));
+}
+
+function getDashboardDataVersion() {
+  if (typeof window === "undefined") return "initial";
+  return localStorage.getItem(DASHBOARD_DATA_VERSION_KEY) || "initial";
+}
+
+function getDashboardCacheKey(year: string, bludId?: string) {
+  return `enterprise-dashboard:${year}:${bludId || "global"}`;
+}
 
 function formatNumber(value: number, digits = 2) {
   return new Intl.NumberFormat("id-ID", {
@@ -183,6 +234,199 @@ function getAchievementLabel(percent: number) {
     label: "Perlu Perbaikan",
     tone: "bg-blue-50 text-blue-700 border-blue-200",
   };
+}
+
+
+type BludFilterOption = {
+  id: string;
+  code: string;
+  name: string;
+};
+
+function BludPillDropdown({
+  value,
+  options,
+  onChange,
+  compact = false,
+}: {
+  value: string;
+  options: BludFilterOption[];
+  onChange: (value: string) => void;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  const selectedOption = options.find((item) => item.id === value);
+  const selectedLabel = selectedOption
+    ? selectedOption.name || selectedOption.code || "BLUD"
+    : "Semua";
+
+  const buttonWidth = 180;
+  const menuWidth = 260;
+
+  const updateMenuPosition = () => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const safeMargin = 12;
+    const desiredLeft = rect.right - menuWidth;
+    const left = Math.min(
+      Math.max(safeMargin, desiredLeft),
+      window.innerWidth - menuWidth - safeMargin,
+    );
+
+    setMenuStyle({
+      top: rect.bottom + 8,
+      left,
+      width: menuWidth,
+    });
+  };
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    updateMenuPosition();
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+
+      if (buttonRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+
+      setOpen(false);
+    };
+
+    const handleReposition = () => updateMenuPosition();
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, compact]);
+
+  const menu =
+    open && mounted && menuStyle
+      ? createPortal(
+          <div
+            ref={menuRef}
+            className="fixed z-[99999] overflow-hidden rounded-[18px] border border-slate-200 bg-white py-1 text-slate-700 shadow-2xl ring-1 ring-slate-900/5 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            style={{
+              top: menuStyle.top,
+              left: menuStyle.left,
+              width: menuStyle.width,
+            }}
+          >
+            <div
+              aria-disabled="true"
+              title="Semua BLUD hanya sebagai tampilan global, tidak bisa dipilih dari dropdown ini."
+              className={`flex w-full cursor-not-allowed select-none items-center justify-between gap-3 px-4 py-2.5 text-left text-[13px] font-black opacity-80 ${
+                value === ""
+                  ? "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+                  : "bg-slate-50 text-slate-500 dark:bg-slate-800/70 dark:text-slate-400"
+              }`}
+            >
+              <span className="truncate">Semua BLUD</span>
+              {value === "" ? (
+                <span className="h-2 w-2 rounded-full bg-blue-600" />
+              ) : null}
+            </div>
+
+            <div className="max-h-72 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              {options.map((item) => {
+                const active = item.id === value;
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      onChange(item.id);
+                      setOpen(false);
+                    }}
+                    className={`flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-[13px] font-semibold transition hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-blue-950/40 dark:hover:text-blue-300 ${
+                      active
+                        ? "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+                        : ""
+                    }`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13px] font-black leading-5">
+                        {item.name || "-"}
+                      </span>
+                      <span className="block truncate text-[12px] font-semibold leading-5 text-slate-500 dark:text-slate-400">
+                        {item.code || "-"}
+                      </span>
+                    </span>
+                    {active ? (
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-blue-600" />
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>,
+          document.body,
+        )
+      : null;
+
+  return (
+    <div className="relative inline-flex items-center">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((current) => !current);
+          window.requestAnimationFrame(updateMenuPosition);
+        }}
+        className="inline-flex h-10 min-w-[180px] max-w-[180px] items-center justify-between gap-2 rounded-full border border-white/25 bg-white/10 px-3.5 text-white shadow-sm ring-1 ring-white/10 backdrop-blur transition hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-white/40"
+        style={{ width: buttonWidth }}
+        title="Filter BLUD mengikuti tahun dashboard yang dipilih"
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-blue-100">
+            BLUD
+          </span>
+          <span className="min-w-0 truncate text-sm font-semibold leading-none text-white">
+            {selectedLabel}
+          </span>
+        </div>
+        <svg
+          className={`h-3 w-3 shrink-0 text-white transition-transform ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <path
+            fillRule="evenodd"
+            d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+            clipRule="evenodd"
+          />
+        </svg>
+      </button>
+      {menu}
+    </div>
+  );
 }
 
 function Block({
@@ -431,7 +675,19 @@ function RejectedInfoDashboardModal({
 }
 
 export default function EnterpriseAssessmentDashboard() {
-  const [year, setYear] = useState("2026");
+  // Filter BLUD dan tahun dibuat global untuk role Admin BPKP/BPKP Reviewer/BPKP.
+  // Store yang sama dipakai Dashboard, Assessment, dan Tindak Lanjut.
+  const year = useBpkpGlobalFilterStore((state) => state.selectedYear);
+  const setYear = useBpkpGlobalFilterStore((state) => state.setSelectedYear);
+  const selectedBludId = useBpkpGlobalFilterStore(
+    (state) => state.selectedBludId,
+  );
+  const setSelectedBlud = useBpkpGlobalFilterStore(
+    (state) => state.setSelectedBlud,
+  );
+  const clearSelectedBlud = useBpkpGlobalFilterStore(
+    (state) => state.clearSelectedBlud,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<DashboardPayload | null>(null);
@@ -442,8 +698,8 @@ export default function EnterpriseAssessmentDashboard() {
     rows: [],
   });
   const [showRejectedModal, setShowRejectedModal] = useState(false);
-  const rejectCheckedRef = useRef(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isFilterHydrated, setIsFilterHydrated] = useState(false);
 
   useEffect(() => {
     const updateTheme = () => {
@@ -462,16 +718,73 @@ export default function EnterpriseAssessmentDashboard() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const storeWithPersist = useBpkpGlobalFilterStore as typeof useBpkpGlobalFilterStore & {
+      persist?: {
+        hasHydrated: () => boolean;
+        onFinishHydration: (callback: () => void) => () => void;
+      };
+    };
+
+    const persistApi = storeWithPersist.persist;
+
+    if (!persistApi) {
+      setIsFilterHydrated(true);
+      return;
+    }
+
+    setIsFilterHydrated(persistApi.hasHydrated());
+
+    const unsubscribe = persistApi.onFinishHydration(() => {
+      setIsFilterHydrated(true);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   const chartTextColor = isDarkMode ? "#cbd5e1" : "#475569";
   const chartGridColor = isDarkMode ? "#334155" : "#e2e8f0";
 
-  const fetchDashboard = async () => {
+  const isOperatorBludDashboard = (dashboardPayload?: DashboardPayload | null) =>
+    String(dashboardPayload?.viewer?.role || "").toUpperCase() ===
+    "BLUD_OPERATOR";
+
+  const resetRejectedSummary = () => {
+    rejectedSummaryCache = null;
+    rejectedSummaryChecked = true;
+    setRejectSummary({
+      totalRejected: 0,
+      rows: [],
+    });
+    setShowRejectedModal(false);
+  };
+
+  const fetchDashboard = async (options?: {
+    force?: boolean;
+    targetYear?: string;
+  }) => {
+    const selectedYear = options?.targetYear ?? year;
+    const force = Boolean(options?.force);
+    const cacheKey = getDashboardCacheKey(selectedYear, selectedBludId);
+    const currentDataVersion = getDashboardDataVersion();
+    const cached = dashboardCache.get(cacheKey);
+
+    if (!force && cached && cached.dataVersion === currentDataVersion) {
+      setPayload(cached.payload);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
     try {
       const params = new URLSearchParams();
-      params.set("year", year);
+      params.set("year", selectedYear);
+      if (selectedBludId) {
+        params.set("bludIds", selectedBludId);
+      }
 
       const res = await fetch(
         `/api/dashboard/enterprise?${params.toString()}`,
@@ -488,22 +801,45 @@ export default function EnterpriseAssessmentDashboard() {
         throw new Error("Endpoint API tidak mengembalikan JSON.");
       }
 
-      const json = JSON.parse(raw);
+      const json = JSON.parse(raw) as DashboardPayload;
 
       if (!res.ok) {
-        throw new Error(json?.message || "Gagal memuat dashboard.");
+        throw new Error(
+          (json as { message?: string })?.message || "Gagal memuat dashboard.",
+        );
       }
+
+      dashboardCache.set(cacheKey, {
+        payload: json,
+        dataVersion: currentDataVersion,
+        fetchedAt: Date.now(),
+      });
 
       setPayload(json);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal memuat dashboard.");
-      setPayload(null);
+
+      if (cached) {
+        setPayload(cached.payload);
+      } else {
+        setPayload(null);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchRejectedSummary = async () => {
+  const fetchRejectedSummary = async (options?: { force?: boolean }) => {
+    if (!options?.force && rejectedSummaryChecked && rejectedSummaryCache) {
+      setRejectSummary(rejectedSummaryCache);
+
+      if (rejectedSummaryCache.rows.length > 0) {
+        setShowRejectedModal(true);
+      }
+
+      return;
+    }
+
     try {
       const res = await fetch("/api/assessments/rejected-summary", {
         cache: "no-store",
@@ -530,10 +866,15 @@ export default function EnterpriseAssessmentDashboard() {
           ? json.totalRejected
           : rows.length;
 
-      setRejectSummary({
+      const nextRejectSummary = {
         totalRejected,
         rows,
-      });
+      };
+
+      rejectedSummaryCache = nextRejectSummary;
+      rejectedSummaryChecked = true;
+
+      setRejectSummary(nextRejectSummary);
 
       if (rows.length > 0) {
         setShowRejectedModal(true);
@@ -544,15 +885,60 @@ export default function EnterpriseAssessmentDashboard() {
   };
 
   useEffect(() => {
-    void fetchDashboard();
+    if (!isFilterHydrated) return;
+
+    void fetchDashboard({ targetYear: year });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year]);
+  }, [isFilterHydrated, year, selectedBludId]);
 
   useEffect(() => {
-    if (rejectCheckedRef.current) return;
-    rejectCheckedRef.current = true;
+    const handleDataChanged = () => {
+      if (!isFilterHydrated) return;
+
+      dashboardCache.delete(getDashboardCacheKey(year, selectedBludId));
+      rejectedSummaryChecked = false;
+      rejectedSummaryCache = null;
+
+      void fetchDashboard({
+        force: true,
+        targetYear: year,
+      });
+
+      if (isOperatorBludDashboard(payload)) {
+        void fetchRejectedSummary({ force: true });
+      }
+    };
+
+    const handleStorageChanged = (event: StorageEvent) => {
+      if (event.key === DASHBOARD_DATA_VERSION_KEY) {
+        handleDataChanged();
+      }
+    };
+
+    window.addEventListener(DASHBOARD_DATA_CHANGED_EVENT, handleDataChanged);
+    window.addEventListener("storage", handleStorageChanged);
+
+    return () => {
+      window.removeEventListener(
+        DASHBOARD_DATA_CHANGED_EVENT,
+        handleDataChanged,
+      );
+      window.removeEventListener("storage", handleStorageChanged);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFilterHydrated, payload, year, selectedBludId]);
+
+  useEffect(() => {
+    if (!payload?.viewer) return;
+
+    if (!isOperatorBludDashboard(payload)) {
+      resetRejectedSummary();
+      return;
+    }
+
     void fetchRejectedSummary();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payload?.viewer?.role, payload?.viewer?.currentBludId, year]);
 
   const summary = payload?.summary ?? {
     totalResponses: 0,
@@ -568,7 +954,89 @@ export default function EnterpriseAssessmentDashboard() {
   const aspectResults = payload?.aspects ?? [];
   const bludScores = payload?.bludScores ?? [];
   const infographicRows = payload?.infographics?.rows ?? [];
+  const bludFilters = payload?.filters?.bluds ?? [];
+  const canSelectBlud = Boolean(payload?.viewer && !payload.viewer.isBludScoped);
+  const viewerRole = String(payload?.viewer?.role || "").toUpperCase();
+  const shouldShowParameterDetail = viewerRole !== "BPKP_ADMIN";
+
+  useEffect(() => {
+    if (!canSelectBlud) return;
+    if (!selectedBludId || bludFilters.length === 0) return;
+
+    const isSelectedBludStillAvailable = bludFilters.some(
+      (item) => item.id === selectedBludId,
+    );
+
+    if (!isSelectedBludStillAvailable) {
+      clearSelectedBlud();
+    }
+  }, [bludFilters, canSelectBlud, clearSelectedBlud, selectedBludId]);
+
+  const selectedBludScore = bludScores.find(
+    (item) => item.bludId === selectedBludId,
+  );
+
+  // Filter section ini hanya untuk tampilan kartu Distribusi dan Ringkasan Status.
+  // Grafik perbandingan antar BLUD tetap global dan tidak ikut berubah saat BLUD dipilih.
+  const filteredInfographicRows =
+    canSelectBlud && selectedBludId
+      ? infographicRows.filter((item) => item.bludId === selectedBludId)
+      : infographicRows;
+
+  const filteredAspectResults =
+    canSelectBlud && selectedBludId
+      ? aspectResults.map((aspectItem) => {
+          const selectedAspect = selectedBludScore?.aspectScores?.find(
+            (score) => score.aspect === aspectItem.aspect,
+          );
+
+          return selectedAspect
+            ? {
+                ...aspectItem,
+                totalWeighted: selectedAspect.totalScore,
+                totalMax: selectedAspect.totalMax,
+                achievement: selectedAspect.achievement,
+              }
+            : {
+                ...aspectItem,
+                totalWeighted: 0,
+                achievement: 0,
+              };
+        })
+      : aspectResults;
+
+  const filteredTotalWeightedScore = filteredAspectResults.reduce(
+    (sum, item) => sum + item.totalWeighted,
+    0,
+  );
+  const filteredTotalMaxScore = filteredAspectResults.reduce(
+    (sum, item) => sum + item.totalMax,
+    0,
+  );
+  const filteredAchievement =
+    filteredTotalMaxScore > 0
+      ? (filteredTotalWeightedScore / filteredTotalMaxScore) * 100
+      : 0;
+
   const badge = getAchievementLabel(summary.achievement);
+  const filteredBadge = getAchievementLabel(filteredAchievement);
+
+  const SectionBludFilter = ({ compact = false }: { compact?: boolean }) => {
+    if (!canSelectBlud) return null;
+
+    return (
+      <BludPillDropdown
+        value={selectedBludId}
+        options={bludFilters}
+        onChange={(nextBludId) => {
+          const nextBlud = bludFilters.find((item) => item.id === nextBludId);
+          setSelectedBlud(nextBlud || null);
+        }}
+        compact={compact}
+      />
+    );
+  };
+
 
   const badgeDotColorMap: Record<string, string> = {
     "Perlu Perbaikan": "bg-blue-500",
@@ -797,6 +1265,10 @@ export default function EnterpriseAssessmentDashboard() {
     const params = new URLSearchParams();
     params.set("year", year);
 
+    if (selectedBludId) {
+      params.set("bludIds", selectedBludId);
+    }
+
     window.open(`/api/reports/assessment?${params.toString()}`, "_blank");
   };
 
@@ -831,6 +1303,38 @@ export default function EnterpriseAssessmentDashboard() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-slate-200 bg-slate-50/80 p-2 dark:border-slate-700 dark:bg-slate-800/50">
+              {canSelectBlud && (
+                <div className="flex items-center gap-2 rounded-2xl bg-white px-3 py-2 shadow-sm dark:bg-slate-900">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    BLUD
+                  </span>
+
+                  <select
+                    value={selectedBludId}
+                    onChange={(e) => {
+                      const nextBludId = e.target.value;
+                      const nextBlud = bludFilters.find(
+                        (item) => item.id === nextBludId,
+                      );
+
+                      if (nextBlud) {
+                        setSelectedBlud(nextBlud);
+                      } else {
+                        clearSelectedBlud();
+                      }
+                    }}
+                    className="max-w-[210px] bg-transparent text-sm font-bold text-slate-800 outline-none dark:text-white"
+                  >
+                    <option value="">Semua BLUD</option>
+                    {bludFilters.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={exportAssessmentPdf}
@@ -859,7 +1363,12 @@ export default function EnterpriseAssessmentDashboard() {
               </div>
 
               <button
-                onClick={() => void fetchDashboard()}
+                onClick={() =>
+                  void fetchDashboard({
+                    force: true,
+                    targetYear: year,
+                  })
+                }
                 className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-500 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-500/20 transition hover:-translate-y-0.5 hover:shadow-xl dark:from-slate-900 dark:to-blue-800 dark:shadow-blue-900/20"
               >
                 <RefreshCw size={16} />
@@ -1040,11 +1549,8 @@ export default function EnterpriseAssessmentDashboard() {
         <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
           <Block className="overflow-hidden">
             <div className="relative border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-500 dark:from-slate-900 dark:via-blue-900 dark:to-slate-900 px-5 py-5 text-white">
-              <div className="absolute right-4 top-3">
-                <div className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-blue-100 ring-1 ring-white/15 backdrop-blur">
-                  <span className="h-1 w-1 rounded-full bg-emerald-400" />
-                  Monitoring BLUD
-                </div>
+              <div className="absolute right-5 top-1/2 -translate-y-1/2">
+                <SectionBludFilter />
               </div>
 
               <div className="flex items-center gap-4">
@@ -1056,9 +1562,11 @@ export default function EnterpriseAssessmentDashboard() {
                   <h3 className="text-base font-semibold leading-tight">
                     Distribusi per BLUD
                   </h3>
-                  <p className="mt-1 text-sm text-blue-100 dark:text-slate-300">
-                    Skor di bawah 3, AOI, dan tindak lanjut tiap BLUD.
-                  </p>
+                  {viewerRole !== "BPKP_ADMIN" ? (
+                    <p className="mt-1 text-sm text-blue-100 dark:text-slate-300">
+                      Skor di bawah 3, AOI, dan tindak lanjut tiap BLUD.
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -1084,14 +1592,14 @@ export default function EnterpriseAssessmentDashboard() {
                   </div>
                 </div>
 
-                {infographicRows.length === 0 ? (
+                {filteredInfographicRows.length === 0 ? (
                   <div className="relative rounded-3xl border border-dashed border-slate-300 bg-white/80 px-4 py-10 text-center text-sm text-slate-500 shadow-sm dark:border-slate-600 dark:bg-slate-900/80 dark:text-slate-400">
                     Data distribusi per BLUD belum tersedia untuk tahun yang
                     dipilih.
                   </div>
                 ) : (
                   <div className="relative space-y-4">
-                    {infographicRows.map((item, index) => {
+                    {filteredInfographicRows.map((item, index) => {
                       const completionRate =
                         item.aoiCount > 0
                           ? Math.min(
@@ -1202,18 +1710,21 @@ export default function EnterpriseAssessmentDashboard() {
           <Block className="overflow-hidden">
             {/* HEADER */}
             <div className="relative border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-500 dark:from-slate-900 dark:via-blue-900 dark:to-slate-900 px-5 py-5 text-white">
-              {/* BADGE POJOK KANAN */}
-              <div className="absolute right-4 top-3">
-                <span
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ring-1 backdrop-blur ${badge.tone}`}
-                >
+              {/* FILTER POJOK KANAN */}
+              <div className="absolute right-5 top-1/2 flex -translate-y-1/2 flex-col items-end gap-1">
+                {viewerRole !== "BPKP_ADMIN" ? (
                   <span
-                    className={`h-1.5 w-1.5 rounded-full ${
-                      badgeDotColorMap[badge.label] ?? "bg-slate-400"
-                    }`}
-                  />
-                  {badge.label}
-                </span>
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ring-1 backdrop-blur ${filteredBadge.tone}`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        badgeDotColorMap[filteredBadge.label] ?? "bg-slate-400"
+                      }`}
+                    />
+                    {filteredBadge.label}
+                  </span>
+                ) : null}
+                <SectionBludFilter compact />
               </div>
 
               <div className="flex items-center gap-4">
@@ -1225,9 +1736,11 @@ export default function EnterpriseAssessmentDashboard() {
                   <h3 className="text-base font-semibold leading-tight">
                     Ringkasan Status Capaian
                   </h3>
-                  <p className="mt-1 text-sm text-blue-100 dark:text-slate-300">
-                    Ringkasan performa capaian berdasarkan masing-masing aspek.
-                  </p>
+                  {viewerRole !== "BPKP_ADMIN" ? (
+                    <p className="mt-1 text-sm text-blue-100 dark:text-slate-300">
+                      Ringkasan performa capaian berdasarkan masing-masing aspek.
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -1235,7 +1748,7 @@ export default function EnterpriseAssessmentDashboard() {
             {/* CONTENT */}
             <div className="p-6">
               <div className="space-y-3">
-                {aspectResults.map((item, index) => {
+                {filteredAspectResults.map((item, index) => {
                   const tone = getAchievementLabel(item.achievement);
                   const progressWidth = Math.min(item.achievement, 100);
                   const statusStyles =
@@ -1340,95 +1853,97 @@ export default function EnterpriseAssessmentDashboard() {
           </Block>
         </section>
 
-        <section>
-          <Block className="overflow-hidden">
-            {/* HEADER */}
-            <div className="relative border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-500 dark:from-slate-900 dark:via-blue-900 dark:to-slate-900 px-5 py-5 text-white">
-              <div className="absolute right-4 top-3">
-                <div className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-blue-100 ring-1 ring-white/15 backdrop-blur">
-                  <span className="h-1 w-1 rounded-full bg-emerald-400" />
-                  {parameterResults.length} Parameter
+        {shouldShowParameterDetail ? (
+          <section>
+            <Block className="overflow-hidden">
+              {/* HEADER */}
+              <div className="relative border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-500 dark:from-slate-900 dark:via-blue-900 dark:to-slate-900 px-5 py-5 text-white">
+                <div className="absolute right-4 top-3">
+                  <div className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-blue-100 ring-1 ring-white/15 backdrop-blur">
+                    <span className="h-1 w-1 rounded-full bg-emerald-400" />
+                    {parameterResults.length} Parameter
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/10">
+                    <ClipboardList size={20} />
+                  </div>
+
+                  <div>
+                    <h3 className="text-base font-semibold leading-tight">
+                      Rincian Skor Tiap Parameter
+                    </h3>
+                    <p className="mt-1 text-sm text-blue-100 dark:text-slate-300">
+                      Distribusi skor dan nilai akhir setiap parameter self
+                      assessment.
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-4">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/10">
-                  <ClipboardList size={20} />
-                </div>
+              {/* CONTENT */}
+              <div className="p-6">
+                <div className="[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden grid max-h-[520px] gap-3 overflow-y-auto pr-1 md:grid-cols-2 xl:grid-cols-3">
+                  {parameterResults.map((item, index) => (
+                    <div
+                      key={item.id}
+                      className="group relative flex flex-col overflow-hidden rounded-[22px] border border-slate-200 bg-gradient-to-br from-white via-blue-50/20 to-white p-4 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-lg dark:border-slate-700 dark:from-slate-900 dark:via-blue-950/20 dark:to-slate-900"
+                    >
+                      <div className="pointer-events-none absolute -top-10 -right-10 h-28 w-28 rounded-full bg-blue-500/10 blur-2xl" />
 
-                <div>
-                  <h3 className="text-base font-semibold leading-tight">
-                    Rincian Skor Tiap Parameter
-                  </h3>
-                  <p className="mt-1 text-sm text-blue-100 dark:text-slate-300">
-                    Distribusi skor dan nilai akhir setiap parameter self
-                    assessment.
-                  </p>
-                </div>
-              </div>
-            </div>
+                      <div className="relative flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold leading-snug text-slate-900 dark:text-white">
+                            {item.label}
+                          </p>
+                        </div>
 
-            {/* CONTENT */}
-            <div className="p-6">
-              <div className="[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden grid max-h-[520px] gap-3 overflow-y-auto pr-1 md:grid-cols-2 xl:grid-cols-3">
-                {parameterResults.map((item, index) => (
-                  <div
-                    key={item.id}
-                    className="group relative flex flex-col overflow-hidden rounded-[22px] border border-slate-200 bg-gradient-to-br from-white via-blue-50/20 to-white p-4 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-lg dark:border-slate-700 dark:from-slate-900 dark:via-blue-950/20 dark:to-slate-900"
-                  >
-                    <div className="pointer-events-none absolute -top-10 -right-10 h-28 w-28 rounded-full bg-blue-500/10 blur-2xl" />
-
-                    <div className="relative flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold leading-snug text-slate-900 dark:text-white">
-                          {item.label}
-                        </p>
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-xs font-black text-white shadow-lg">
+                          {index + 1}
+                        </div>
                       </div>
 
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-xs font-black text-white shadow-lg">
-                        {index + 1}
-                      </div>
-                    </div>
+                      <div className="mt-3 space-y-2">
+                        <div>
+                          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                            <span>Skor rata-rata</span>
+                            <span className="font-bold text-slate-800 dark:text-white">
+                              {formatNumber(item.rawScore, 2)} / 5
+                            </span>
+                          </div>
 
-                    <div className="mt-3 space-y-2">
-                      <div>
-                        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                          <span>Skor rata-rata</span>
-                          <span className="font-bold text-slate-800 dark:text-white">
-                            {formatNumber(item.rawScore, 2)} / 5
+                          <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400 transition-all duration-700"
+                              style={{
+                                width: `${Math.min((item.rawScore / 5) * 100, 100)}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500 dark:text-slate-400">
+                            Nilai
+                          </span>
+                          <span className="text-sm font-black text-slate-900 dark:text-white">
+                            {formatNumber(item.weightedScore, 5)}
                           </span>
                         </div>
 
-                        <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400 transition-all duration-700"
-                            style={{
-                              width: `${Math.min((item.rawScore / 5) * 100, 100)}%`,
-                            }}
-                          />
+                        <div className="flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
+                          <span>{item.responseCount} response</span>
+                          <span>Bobot {formatNumber(item.maxScore, 3)}</span>
                         </div>
                       </div>
-
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-500 dark:text-slate-400">
-                          Nilai
-                        </span>
-                        <span className="text-sm font-black text-slate-900 dark:text-white">
-                          {formatNumber(item.weightedScore, 5)}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
-                        <span>{item.responseCount} response</span>
-                        <span>Bobot {formatNumber(item.maxScore, 3)}</span>
-                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          </Block>
-        </section>
+            </Block>
+          </section>
+        ) : null}
       </div>
 
       <BludResponseModal

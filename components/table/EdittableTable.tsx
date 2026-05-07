@@ -4,6 +4,10 @@ import { PAGE_CONFIG } from "@/components/config/page-config";
 import { PAGE_PARAMETER_OPTIONS } from "@/components/config/page-parameter-options";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  isBpkpGlobalFilterRole,
+  useBpkpGlobalFilterStore,
+} from "../../stores/useBpkpGlobalFilterStore";
+import {
   CalendarDays,
   CheckCircle2,
   Eye,
@@ -64,6 +68,12 @@ type Row = {
 
 type FormRow = Row & { customFileName: string };
 
+type BludOption = {
+  id: string;
+  code: string;
+  name: string;
+};
+
 type AssessmentPayload = {
   periodId: string | null;
   status: string;
@@ -77,7 +87,11 @@ type AssessmentPayload = {
   canSubmit: boolean;
   canReview: boolean;
   userRole?: string;
+  blud?: BludOption | null;
+  bludOptions?: BludOption[];
   rows: Row[];
+  daMode?: DaMode;
+  sourceRows?: Row[];
 
   totalCompletedParametersAllModules?: number;
   totalAcceptedParametersAllModules?: number;
@@ -106,6 +120,8 @@ type LoadingAction =
   | "reviewing_assessment"
   | "submitting_workflow"
   | null;
+
+type DaMode = "manual" | "tarik_data";
 
 type ReviewState = {
   open: boolean;
@@ -239,17 +255,17 @@ function isAoiRequired(criteriaScore: number) {
 }
 
 function isEvidenceRequired(criteriaScore: number) {
-  return criteriaScore > 2;
+  return criteriaScore > 1;
 }
 
 function getEvidenceGuidance(criteriaScore: number) {
-  if (criteriaScore > 2) {
+  if (criteriaScore > 1) {
     return {
       required: true,
       tone: "amber",
       title: "Upload Evidence wajib",
       description:
-        "Karena skor parameter lebih dari 2, evidence wajib diunggah sebelum assessment dapat disimpan.",
+        "Karena skor parameter berada pada Level 2 atau lebih, evidence wajib diunggah sebelum assessment dapat disimpan.",
     };
   }
 
@@ -258,7 +274,7 @@ function getEvidenceGuidance(criteriaScore: number) {
     tone: "emerald",
     title: "Upload Evidence opsional",
     description:
-      "Karena skor parameter 2 atau kurang, evidence tidak wajib. Anda tetap dapat mengunggah evidence bila diperlukan.",
+      "Karena skor parameter Level 1, evidence bersifat opsional. Anda tetap dapat mengunggah evidence bila diperlukan.",
   };
 }
 
@@ -1384,7 +1400,7 @@ function FormBody({
                       onClick={() => removeDocument(doc.id, isEdit)}
                       title={
                         isLastEvidenceLocked
-                          ? "Minimal 1 evidence wajib ada karena skor parameter lebih dari 2."
+                          ? "Minimal 1 evidence wajib ada karena level parameter lebih dari 1."
                           : undefined
                       }
                       className="rounded-xl border border-red-200 bg-white p-2.5 text-red-600 shadow-sm transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-900/60 dark:bg-slate-900 dark:text-red-400 dark:hover:bg-red-950/30"
@@ -1423,7 +1439,16 @@ export default function EdittableTable({
 }: {
   currentPage: string;
 }) {
-  const [selectedYear, setSelectedYear] = useState("2026");
+  const globalYear = useBpkpGlobalFilterStore((state) => state.selectedYear);
+  const setGlobalYear = useBpkpGlobalFilterStore((state) => state.setSelectedYear);
+  const globalBludCode = useBpkpGlobalFilterStore(
+    (state) => state.selectedBludCode,
+  );
+  const setGlobalBlud = useBpkpGlobalFilterStore((state) => state.setSelectedBlud);
+
+  const [localSelectedYear, setLocalSelectedYear] = useState("2026");
+  const [selectedDaMode, setSelectedDaMode] = useState<DaMode>("manual");
+  const [localSelectedBludCode, setLocalSelectedBludCode] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [periodInfo, setPeriodInfo] = useState<AssessmentPayload | null>(null);
   const showExportPdf = false;
@@ -1452,6 +1477,47 @@ export default function EdittableTable({
     null,
   );
   const [loadingAction, setLoadingAction] = useState<LoadingAction>(null);
+
+  const globalFilterUserRole = String(periodInfo?.userRole || "").toUpperCase();
+
+  /**
+   * BPKP/Admin BPKP memakai global filter BLUD.
+   *
+   * Sebelumnya, pada render pertama `periodInfo` masih null sehingga role belum
+   * diketahui dan komponen sementara memakai local filter. Akibatnya request awal
+   * menjadi tanpa `bludCode`, lalu setelah payload mengisi role/BLUD terjadi render
+   * ulang dan request berikutnya memakai `bludCode`. Untuk BPKP/Admin BPKP, kondisi
+   * itu membuat fetch menjadi redundan.
+   *
+   * Dengan fallback `hasPreselectedBpkpBlud`, jika store global sudah punya BLUD
+   * terpilih, request pertama langsung memakai `bludCode`. Flow Operator BLUD dan
+   * Admin BLUD tidak diubah karena mereka tetap tidak menampilkan/mengandalkan
+   * filter global BPKP.
+   */
+  const hasPreselectedBpkpBlud = !periodInfo && !!globalBludCode;
+  const usesBpkpGlobalFilter =
+    isBpkpGlobalFilterRole(globalFilterUserRole) || hasPreselectedBpkpBlud;
+
+  const selectedYear = usesBpkpGlobalFilter ? globalYear : localSelectedYear;
+  const setSelectedYear = usesBpkpGlobalFilter
+    ? setGlobalYear
+    : setLocalSelectedYear;
+  const selectedBludCode = usesBpkpGlobalFilter
+    ? globalBludCode
+    : localSelectedBludCode;
+  const setSelectedBludCode = (code: string) => {
+    const normalizedCode = String(code || "").toUpperCase();
+
+    if (usesBpkpGlobalFilter) {
+      const nextBlud = periodInfo?.bludOptions?.find(
+        (item) => String(item.code).toUpperCase() === normalizedCode,
+      );
+      setGlobalBlud(nextBlud || { code: normalizedCode });
+      return;
+    }
+
+    setLocalSelectedBludCode(normalizedCode);
+  };
   const [rejectedInfoState, setRejectedInfoState] = useState<RejectedInfoState>(
     {
       open: false,
@@ -1504,10 +1570,25 @@ export default function EdittableTable({
     currentUserRole === "BPKP_ADMIN" ||
     currentUserRole === "BPKP_REVIEWER";
 
+  const isBpkpSelfAssessmentMode = isBpkp;
+
+  const bludOptions = Array.isArray(periodInfo?.bludOptions)
+    ? periodInfo.bludOptions
+    : [];
+  const showBludFilter = isBpkp && bludOptions.length > 0;
+
   const existingParameterIds = new Set(rows.map((row) => row.parameterId));
   const availableParameters = parameterOptions.filter(
     (item) => !existingParameterIds.has(item.id),
   );
+
+  const sourceRowsByParameterId = useMemo(() => {
+    const sourceRows = Array.isArray(periodInfo?.sourceRows)
+      ? periodInfo.sourceRows
+      : [];
+
+    return Object.fromEntries(sourceRows.map((row) => [row.parameterId, row]));
+  }, [periodInfo?.sourceRows]);
 
   const progress =
     parameterOptions.length > 0
@@ -1531,8 +1612,8 @@ export default function EdittableTable({
   const isExactly28ParametersCompletedAllModules =
     totalCompletedParametersAllModules >= REQUIRED_OPERATOR_PARAMS_FOR_SUBMIT;
 
-  const isEditable = !!periodInfo?.canEdit;
-  const showReviewAction = !!periodInfo?.canReview;
+  const isEditable = isBpkpSelfAssessmentMode ? true : !!periodInfo?.canEdit;
+  const showReviewAction = isBpkp ? false : !!periodInfo?.canReview;
 
   const hasGlobalSubmittedToAdminBlud =
     isOperatorBlud && !!periodInfo?.globalSubmittedAt;
@@ -1724,10 +1805,22 @@ export default function EdittableTable({
     setLoading(true);
     resetMessages();
     try {
-      const response = await fetch(
-        `/api/assessments?year=${selectedYear}&moduleKey=${currentPage}`,
-        { cache: "no-store" },
-      );
+      const params = new URLSearchParams({
+        year: selectedYear,
+        moduleKey: currentPage,
+      });
+
+      if (selectedBludCode) {
+        params.set("bludCode", selectedBludCode);
+      }
+
+      if (selectedDaMode) {
+        params.set("daMode", selectedDaMode);
+      }
+
+      const response = await fetch(`/api/assessments?${params.toString()}`, {
+        cache: "no-store",
+      });
 
       const payload = await parseJsonSafe(response);
 
@@ -1744,6 +1837,39 @@ export default function EdittableTable({
       setPeriodInfo(payload as AssessmentPayload);
       setReviewerNotes(payload?.reviewerNotes || "");
 
+      const payloadBludCode = payload?.blud?.code
+        ? String(payload.blud.code).toUpperCase()
+        : "";
+
+      /**
+       * Prevent duplicate GET on first load.
+       *
+       * Case BPKP/Admin BPKP:
+       * - First render may not know userRole yet, so selectedBludCode can be empty
+       *   and the first request becomes: /api/assessments?year=...&moduleKey=...&daMode=manual
+       * - The API still resolves a BLUD context and returns payload.blud.code.
+       * - After periodInfo/global BLUD state is populated, selectedBludCode can become
+       *   that same BLUD code and useEffect would otherwise fetch the same data again
+       *   with bludCode=...
+       *
+       * By normalizing activeFetchKeyRef to the concrete BLUD returned by the API,
+       * the next render with the same BLUD is treated as already fetched. If the user
+       * actually chooses a different BLUD, the key will differ and fetchRows() still runs.
+       * This does not change Operator BLUD/Admin BLUD workflow because the API response,
+       * permissions, rows, submit/review logic, and mutation payloads are untouched.
+       */
+      if (!selectedBludCode && payloadBludCode) {
+        activeFetchKeyRef.current = `${selectedYear}-${currentPage}-${selectedDaMode}-${payloadBludCode}`;
+      }
+
+      if (
+        !selectedBludCode &&
+        payloadBludCode &&
+        !isBpkpGlobalFilterRole(payload?.userRole)
+      ) {
+        setSelectedBludCode(payloadBludCode);
+      }
+
       syncRejectedInfoModal(nextRows, payload?.userRole);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal memuat assessment.");
@@ -1758,7 +1884,7 @@ export default function EdittableTable({
   };
 
   useEffect(() => {
-    const fetchKey = `${selectedYear}-${currentPage}`;
+    const fetchKey = `${selectedYear}-${currentPage}-${selectedDaMode}-${selectedBludCode || "AUTO"}`;
 
     if (activeFetchKeyRef.current === fetchKey) {
       return;
@@ -1767,23 +1893,34 @@ export default function EdittableTable({
     activeFetchKeyRef.current = fetchKey;
 
     void fetchRows();
-  }, [selectedYear, currentPage]);
+  }, [selectedYear, currentPage, selectedBludCode, selectedDaMode]);
 
   const defaultFormRow = (parameterId?: number): FormRow | null => {
     const fallback = parameterId
       ? parameterById[parameterId]
       : availableParameters[0];
     if (!fallback) return null;
+    const pulledSourceRow =
+      isBpkp && selectedDaMode === "tarik_data"
+        ? sourceRowsByParameterId[fallback.id]
+        : null;
     const defaultCriteria = fallback.criteria[0];
     return {
       id: "",
       parameterId: fallback.id,
       parameter: fallback.label,
-      criteriaCode: defaultCriteria?.code || "",
-      criteriaLabel: defaultCriteria?.label || "",
-      criteriaScore: defaultCriteria?.score || 0,
-      aoi: "",
-      documents: [],
+      criteriaCode:
+        pulledSourceRow?.criteriaCode || defaultCriteria?.code || "",
+      criteriaLabel:
+        pulledSourceRow?.criteriaLabel || defaultCriteria?.label || "",
+      criteriaScore:
+        pulledSourceRow?.criteriaScore || defaultCriteria?.score || 0,
+      aoi: pulledSourceRow?.aoi || "",
+      documents: (pulledSourceRow?.documents || []).map((doc) => ({
+        ...doc,
+        isPersisted: false,
+        cleanupOnCancel: false,
+      })),
       customFileName: "",
       createdByRole: null,
       createdByName: null,
@@ -1794,6 +1931,13 @@ export default function EdittableTable({
   };
 
   const openAddModal = () => {
+    if (isBpkp) {
+      if (!selectedBludCode && !periodInfo?.blud?.code) {
+        setError("Pilih filter BLUD terlebih dahulu.");
+        return;
+      }
+    }
+
     if (isOperatorWaitingAdminReview) {
       setError(
         "Assessment sudah dikirim ke Admin BLUD dan sedang menunggu review. Parameter baru tidak dapat ditambahkan saat status masih Pending Review.",
@@ -1986,6 +2130,13 @@ export default function EdittableTable({
         formData.append("moduleKey", currentPage);
         formData.append("sourceParameter", target.parameter);
         formData.append("customName", target.customFileName.trim());
+        formData.append("daMode", selectedDaMode);
+        if (selectedBludCode || periodInfo?.blud?.code) {
+          formData.append(
+            "bludCode",
+            selectedBludCode || periodInfo?.blud?.code || "",
+          );
+        }
         formData.append("files", file);
 
         const response = await fetch("/api/documents/upload", {
@@ -2111,7 +2262,7 @@ export default function EdittableTable({
 
     if (isLastRequiredEvidence) {
       setError(
-        "Minimal 1 evidence wajib ada karena skor parameter lebih dari 2.",
+        "Minimal 1 evidence wajib ada karena level parameter lebih dari 1.",
       );
       return;
     }
@@ -2358,7 +2509,7 @@ export default function EdittableTable({
     }
     if (evidenceRequired && formRow.documents.length === 0) {
       nextErrors.documents =
-        "Upload Evidence wajib apabila skor parameter lebih dari 2.";
+        "Upload Evidence wajib apabila level parameter lebih dari 1.";
     }
 
     if (Object.keys(nextErrors).length > 0) {
@@ -2376,6 +2527,8 @@ export default function EdittableTable({
         body: JSON.stringify({
           year: Number(selectedYear),
           moduleKey: currentPage,
+          bludCode: selectedBludCode || periodInfo?.blud?.code || undefined,
+          daMode: selectedDaMode,
           row: {
             parameterId: formRow.parameterId,
             parameter: formRow.parameter,
@@ -2428,7 +2581,7 @@ export default function EdittableTable({
 
     if (evidenceRequired && editingRow.documents.length === 0) {
       nextErrors.documents =
-        "Upload Evidence wajib apabila skor parameter lebih dari 2.";
+        "Upload Evidence wajib apabila level parameter lebih dari 1.";
     }
 
     if (Object.keys(nextErrors).length > 0) {
@@ -2444,6 +2597,7 @@ export default function EdittableTable({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          daMode: selectedDaMode,
           criteriaCode: editingRow.criteriaCode,
           criteriaLabel: editingRow.criteriaLabel,
           criteriaScore: editingRow.criteriaScore,
@@ -2868,10 +3022,75 @@ export default function EdittableTable({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            <div className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/12 px-4 py-2 text-xs font-black text-white shadow-sm backdrop-blur transition hover:bg-white/16">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Status: {periodInfo?.statusLabel || "Draft"}
-            </div>
+            {isBpkp && (
+              <div className="relative min-w-[180px]">
+                <select
+                  value={selectedDaMode}
+                  onChange={(e) => {
+                    setSelectedDaMode(e.target.value as DaMode);
+                    setRows([]);
+                    setPeriodInfo((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            rows: [],
+                            periodId: null,
+                            statusLabel: "Draft",
+                          }
+                        : prev,
+                    );
+                  }}
+                  className="h-11 w-full appearance-none rounded-2xl border border-white/20 bg-white/15 px-4 pr-9 text-xs font-black text-white shadow-sm outline-none backdrop-blur transition hover:bg-white/22 focus:border-white/40 focus:ring-4 focus:ring-white/10 [&>option]:bg-white [&>option]:text-slate-800"
+                  title="Filter DA"
+                >
+                  <option value="manual">DA Manual</option>
+                  <option value="tarik_data">DA Tarik Data</option>
+                </select>
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/80">
+                  ▾
+                </span>
+              </div>
+            )}
+
+            {showBludFilter && (
+              <div className="relative min-w-[220px]">
+                <select
+                  value={selectedBludCode || periodInfo?.blud?.code || ""}
+                  onChange={(e) => {
+                    setSelectedBludCode(e.target.value);
+                    setRows([]);
+                    setPeriodInfo((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            rows: [],
+                            periodId: null,
+                            statusLabel: "Draft",
+                          }
+                        : prev,
+                    );
+                  }}
+                  className="h-11 w-full appearance-none rounded-2xl border border-white/20 bg-white/15 px-4 pr-9 text-xs font-black text-white shadow-sm outline-none backdrop-blur transition hover:bg-white/22 focus:border-white/40 focus:ring-4 focus:ring-white/10 [&>option]:bg-white [&>option]:text-slate-800"
+                  title="Filter BLUD"
+                >
+                  {bludOptions.map((blud) => (
+                    <option key={blud.id} value={blud.code}>
+                      {blud.name} ({blud.code})
+                    </option>
+                  ))}
+                </select>
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/80">
+                  ▾
+                </span>
+              </div>
+            )}
+
+            {!isBpkp && (
+              <div className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/12 px-4 py-2 text-xs font-black text-white shadow-sm backdrop-blur transition hover:bg-white/16">
+                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                Status: {periodInfo?.statusLabel || "Draft"}
+              </div>
+            )}
 
             {showHeaderSubmitToAdminBlud && (
               <button
@@ -2893,18 +3112,23 @@ export default function EdittableTable({
               </button>
             )}
 
-            {!showReviewAction &&
-              isEditable &&
-              !isOperatorWaitingAdminReview &&
-              !isOperatorInRejectedRevisionPhase && (
-                <button
-                  onClick={openAddModal}
-                  disabled={!isEditable || availableParameters.length === 0}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/15 px-4 py-2 text-sm font-bold text-white shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/22 hover:shadow-lg disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/50 disabled:hover:translate-y-0 disabled:hover:shadow-sm"
-                >
-                  <Plus size={16} /> Tambah Parameter
-                </button>
-              )}
+            {((isBpkpSelfAssessmentMode && !showReviewAction) ||
+              (!showReviewAction &&
+                isEditable &&
+                !isOperatorWaitingAdminReview &&
+                !isOperatorInRejectedRevisionPhase)) && (
+              <button
+                onClick={openAddModal}
+                disabled={
+                  !isEditable ||
+                  availableParameters.length === 0 ||
+                  (isBpkp && !(selectedBludCode || periodInfo?.blud?.code))
+                }
+                className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/15 px-4 py-2 text-sm font-bold text-white shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/22 hover:shadow-lg disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/50 disabled:hover:translate-y-0 disabled:hover:shadow-sm"
+              >
+                <Plus size={16} /> Tambah Parameter
+              </button>
+            )}
 
             {showExportPdf && periodInfo?.periodId && (
               <button
@@ -3212,7 +3436,11 @@ export default function EdittableTable({
 
         {showAddModal && formRow && (
           <ModalShell
-            title="Tambah Parameter Assessment"
+            title={
+              isBpkpSelfAssessmentMode
+                ? `Tambah Parameter Assessment - DA ${selectedDaMode === "manual" ? "Manual" : "Tarik Data"}`
+                : "Tambah Parameter Assessment"
+            }
             onClose={() => void handleCloseAddModal()}
             onSave={() => void submitNewRow()}
             saveLabel="Simpan Assessment"

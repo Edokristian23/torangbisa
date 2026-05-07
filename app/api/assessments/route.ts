@@ -8,17 +8,40 @@ import {
   mapStatusLabel,
 } from "@/lib/assessment";
 import { createAuditLog } from "@/lib/audit";
-import type { AssessmentStatus } from "@prisma/client";
+import type { AssessmentStatus, UserRole } from "@prisma/client";
+
+function canUseBludFilter(role?: string | null) {
+  const roleUpper = String(role || "").toUpperCase();
+
+  return (
+    roleUpper === "BPKP" ||
+    roleUpper === "BPKP_ADMIN" ||
+    roleUpper === "BPKP_REVIEWER" ||
+    isAdminRole(roleUpper as UserRole)
+  );
+}
+
+async function getBludOptions() {
+  const bluds = await prisma.blud.findMany({
+    orderBy: [{ name: "asc" }, { code: "asc" }],
+    select: {
+      id: true,
+      code: true,
+      name: true,
+    },
+  });
+
+  return bluds.map((blud) => ({
+    id: blud.id,
+    code: blud.code,
+    name: blud.name,
+  }));
+}
 
 async function resolveBludContext(session: any, request: Request) {
   const role = String(session?.user?.role || "").toUpperCase();
 
-  if (
-    role === "BLUD_ADMIN" ||
-    role === "BPKP_ADMIN" ||
-    role === "BPKP_REVIEWER" ||
-    isAdminRole(session?.user?.role)
-  ) {
+  if (canUseBludFilter(session?.user?.role)) {
     const { searchParams } = new URL(request.url);
     const bludCode = searchParams.get("bludCode") || searchParams.get("blud");
 
@@ -34,6 +57,12 @@ async function resolveBludContext(session: any, request: Request) {
   if (session?.user?.bludId) {
     return prisma.blud.findUnique({
       where: { id: session.user.bludId },
+    });
+  }
+
+  if (canUseBludFilter(session?.user?.role)) {
+    return prisma.blud.findFirst({
+      orderBy: [{ name: "asc" }, { code: "asc" }],
     });
   }
 
@@ -131,7 +160,37 @@ function serializeAssessmentRows(rows: any[]) {
 }
 
 function isEvidenceRequired(criteriaScore: number) {
-  return criteriaScore > 2;
+  return criteriaScore > 1;
+}
+
+const BPKP_ROLES = ["BPKP", "BPKP_ADMIN", "BPKP_REVIEWER"];
+
+function isBpkpRole(role?: string | null) {
+  return BPKP_ROLES.includes(String(role || "").toUpperCase());
+}
+
+function normalizeDaMode(value?: string | null) {
+  const raw = String(value || "manual").toLowerCase();
+  if (["tarik_data", "tarik-data", "tarikdata"].includes(raw)) {
+    return "tarik_data";
+  }
+  return "manual";
+}
+
+function bludInputWhere() {
+  return {
+    OR: [
+      { createdByRole: null },
+      { createdByRole: "BLUD_OPERATOR" },
+      { createdByRole: "BLUD_ADMIN" },
+    ],
+  };
+}
+
+function bpkpInputWhere() {
+  return {
+    createdByRole: { in: BPKP_ROLES },
+  };
 }
 
 export async function GET(request: Request) {
@@ -145,8 +204,12 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const year = Number(searchParams.get("year"));
     const moduleKey = String(searchParams.get("moduleKey") || "");
+    const daMode = normalizeDaMode(
+      searchParams.get("daMode") || searchParams.get("da"),
+    );
     const role = session.user.role;
     const roleUpper = String(role || "").toUpperCase();
+    const bludOptions = canUseBludFilter(role) ? await getBludOptions() : [];
     const blud = await resolveBludContext(session, request);
 
     if (!year || !moduleKey) {
@@ -244,6 +307,7 @@ export async function GET(request: Request) {
             bludId: blud.id,
             year,
           },
+          ...bludInputWhere(),
         },
       });
 
@@ -255,6 +319,7 @@ export async function GET(request: Request) {
             year,
           },
           reviewStatus: "accepted",
+          ...bludInputWhere(),
         },
       });
 
@@ -265,6 +330,7 @@ export async function GET(request: Request) {
           year,
         },
         reviewStatus: "rejected",
+        ...bludInputWhere(),
       },
     });
 
@@ -301,7 +367,11 @@ export async function GET(request: Request) {
      *   memang me-reset reviewedAt menjadi null.
      */
     const globalSubmittedToBpkpAt =
-      roleUpper === "BLUD_ADMIN" && totalAcceptedParametersAllModules >= 28
+      (roleUpper === "BLUD_ADMIN" ||
+        roleUpper === "BPKP" ||
+        roleUpper === "BPKP_ADMIN" ||
+        roleUpper === "BPKP_REVIEWER") &&
+      totalAcceptedParametersAllModules >= 28
         ? allPeriods
             .filter(
               (item) =>
@@ -325,6 +395,7 @@ export async function GET(request: Request) {
           code: blud.code,
           name: blud.name,
         },
+        bludOptions,
         periodId: null,
 
         status: "DRAFT",
@@ -346,11 +417,28 @@ export async function GET(request: Request) {
         hiddenByRevisionRequest: false,
         totalCompletedParametersAllModules,
         totalAcceptedParametersAllModules,
+        daMode,
+        sourceRows: [],
         rows: [],
       });
     }
 
-    const responseRows = period.responses;
+    const bludRows = period.responses.filter((row: any) => {
+      const createdByRole = String(
+        row.createdByRole || "BLUD_OPERATOR",
+      ).toUpperCase();
+      return !BPKP_ROLES.includes(createdByRole);
+    });
+
+    const bpkpRows = period.responses.filter((row: any) =>
+      BPKP_ROLES.includes(String(row.createdByRole || "").toUpperCase()),
+    );
+
+    const responseRows = isBpkpRole(role) ? bpkpRows : bludRows;
+    const sourceRows =
+      isBpkpRole(role) && daMode === "tarik_data"
+        ? serializeAssessmentRows(bludRows)
+        : [];
 
     return NextResponse.json({
       blud: {
@@ -358,6 +446,7 @@ export async function GET(request: Request) {
         code: blud.code,
         name: blud.name,
       },
+      bludOptions,
       periodId: period.id,
 
       // status module tetap dikirim, tapi statusLabel header memakai globalDisplayStatus
@@ -382,6 +471,8 @@ export async function GET(request: Request) {
       hiddenByRevisionRequest: false,
       totalCompletedParametersAllModules,
       totalAcceptedParametersAllModules,
+      daMode,
+      sourceRows,
       rows: serializeAssessmentRows(responseRows),
     });
   } catch (error) {
@@ -409,20 +500,17 @@ export async function POST(request: Request) {
     const year = Number(body.year);
     const moduleKey = String(body.moduleKey || "");
     const row = body.row;
+    const daMode = normalizeDaMode(body.daMode || body.da);
+    const role = session.user.role;
+    const roleUpper = String(role || "").toUpperCase();
+    const isBpkpSelfInput = isBpkpRole(role);
     const targetBludCode = body.bludCode
       ? String(body.bludCode).toUpperCase()
       : null;
 
-    const role = session.user.role;
     let bludId = session.user.bludId;
 
-    if (
-      (role === "BLUD_ADMIN" ||
-        role === "BPKP_ADMIN" ||
-        role === "BPKP_REVIEWER" ||
-        isAdminRole(role)) &&
-      targetBludCode
-    ) {
+    if (canUseBludFilter(role) && targetBludCode) {
       const blud = await prisma.blud.findUnique({
         where: { code: targetBludCode },
       });
@@ -480,7 +568,7 @@ export async function POST(request: Request) {
       },
     });
 
-    if (!canMutateAssessment(role, period.status)) {
+    if (!isBpkpSelfInput && !canMutateAssessment(role, period.status)) {
       return NextResponse.json(
         {
           message: `Assessment dengan status ${mapStatusLabel(
@@ -495,6 +583,7 @@ export async function POST(request: Request) {
       where: {
         assessmentPeriodId: period.id,
         parameterId: Number(row.parameterId),
+        ...(isBpkpSelfInput ? bpkpInputWhere() : bludInputWhere()),
       },
     });
 
@@ -512,7 +601,7 @@ export async function POST(request: Request) {
     if (isEvidenceRequired(criteriaScore) && documentIds.length === 0) {
       return NextResponse.json(
         {
-          message: "Upload Evidence wajib apabila skor parameter lebih dari 2.",
+          message: "Upload Evidence wajib apabila level parameter lebih dari 1.",
         },
         { status: 400 },
       );
@@ -521,10 +610,32 @@ export async function POST(request: Request) {
     let validDocuments: Array<{ id: string }> = [];
 
     if (documentIds.length > 0) {
+      /**
+       * Fix existing document global untuk Admin BPKP:
+       *
+       * Sebelumnya dokumen hanya dianggap valid bila assessmentPeriodId sama
+       * dengan periode module yang sedang dibuka. Setelah cek existing dokumen
+       * dibuat global per BLUD + tahun, dokumen existing dari module lain akan
+       * memiliki assessmentPeriodId berbeda sehingga POST /api/assessments
+       * mengembalikan 400 saat tombol Simpan diklik.
+       *
+       * Perubahan ini hanya berlaku untuk input self-assessment BPKP.
+       * Operator BLUD dan Admin BLUD tetap memakai validasi lama berbasis
+       * assessmentPeriodId current module agar workflow existing tidak berubah.
+       */
       validDocuments = await prisma.assessmentDocument.findMany({
         where: {
           id: { in: documentIds },
-          assessmentPeriodId: period.id,
+          ...(isBpkpSelfInput
+            ? {
+                assessmentPeriod: {
+                  bludId,
+                  year,
+                },
+              }
+            : {
+                assessmentPeriodId: period.id,
+              }),
         },
         select: { id: true },
       });
@@ -533,7 +644,9 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             message:
-              "Sebagian dokumen tidak valid untuk periode assessment ini.",
+              isBpkpSelfInput
+                ? "Sebagian dokumen tidak valid untuk BLUD dan tahun yang dipilih."
+                : "Sebagian dokumen tidak valid untuk periode assessment ini.",
           },
           { status: 400 },
         );
@@ -553,7 +666,9 @@ export async function POST(request: Request) {
         reviewStatus: "pending",
         reviewNotes: null,
         reviewedAt: null,
-        createdByRole: String(role || "BLUD_OPERATOR"),
+        createdByRole: isBpkpSelfInput
+          ? roleUpper
+          : String(role || "BLUD_OPERATOR"),
         createdByName: String(session.user.name || "") || null,
         documentLinks: {
           create: documentIds.map((documentId: string) => ({
@@ -578,7 +693,14 @@ export async function POST(request: Request) {
       entityType: "AssessmentResponse",
       entityId: created.id,
       nextState: body,
-      metadata: { year, moduleKey, bludId, documentIds },
+      metadata: {
+        year,
+        moduleKey,
+        bludId,
+        documentIds,
+        daMode,
+        isBpkpSelfInput,
+      },
     });
 
     return NextResponse.json(

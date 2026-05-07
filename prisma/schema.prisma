@@ -75,6 +75,8 @@ model User {
   reviewedAssessmentResponses AssessmentResponse[] @relation("AssessmentResponseReviewer")
 
   createdFollowUpEntries    FollowUpEntry[]      @relation("FollowUpCreator")
+
+  guideDocuments            GuideDocument[]      @relation("GuideDocumentUploader")
 }
 
 model AssessmentPeriod {
@@ -134,7 +136,6 @@ model AssessmentResponse {
   createdAt          DateTime                     @default(now())
   updatedAt          DateTime                     @updatedAt
 
-  // ✅ TAMBAHAN WAJIB
   isRevision             Boolean? @default(false)
   revisionNumber         Int?
   previousCriteriaCode   String?
@@ -245,4 +246,25 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([action, createdAt])
   @@index([actorId, createdAt])
+}
+
+model GuideDocument {
+  id             String          @id @default(cuid())
+  name           String
+  description    String?
+  originalName   String
+  mimeType       String
+  fileExtension  String?
+  fileSize       Int
+  checksumSha256 String?
+  fileData       Bytes
+  isActive       Boolean         @default(true)
+  uploadedById   String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  uploadedBy     User?           @relation("GuideDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([isActive, createdAt])
+  @@index([uploadedById])
 }

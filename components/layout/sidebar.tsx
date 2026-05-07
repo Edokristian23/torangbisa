@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BookOpenCheck,
   ChevronDown,
   ClipboardCheck,
   LayoutDashboard,
@@ -10,8 +11,7 @@ import {
   User2Icon,
   Zap,
 } from "lucide-react";
-import Image from "next/image";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 const baseMenuItems = [
   {
@@ -57,6 +57,11 @@ const baseMenuItems = [
     label: "Tindak Lanjut",
   },
   {
+    id: "panduan",
+    icon: BookOpenCheck,
+    label: "Panduan",
+  },
+  {
     id: "user",
     icon: User2Icon,
     label: "User",
@@ -79,24 +84,20 @@ const Sidebar = ({
   onPageChange,
 }: PropsSidebar) => {
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const menuItems = baseMenuItems.filter(
-    (item) => item.id !== "user" || session?.user?.role === "ADMIN",
-  );
   const [lastSubPage, setLastSubPage] = useState<Record<string, string>>({});
 
-  const toggleExpanded = (itemId: string) => {
-    const newExpanded = new Set(expandedItems);
+  const menuItems = useMemo(
+    () =>
+      baseMenuItems.filter(
+        (item) =>
+          item.id !== "user" ||
+          session?.user?.role === "ADMIN" ||
+          session?.user?.role === "SUPER_ADMIN" ||
+          session?.user?.role === "BPKP_ADMIN",
+      ),
+    [session?.user?.role],
+  );
 
-    if (newExpanded.has(itemId)) {
-      newExpanded.delete(itemId);
-    } else {
-      newExpanded.add(itemId);
-    }
-
-    setExpandedItems(newExpanded);
-  };
-
-  // cek apakah parent aktif
   const isParentActive = (item: any) => {
     if (currentPage === item.id) return true;
 
@@ -107,18 +108,49 @@ const Sidebar = ({
     return false;
   };
 
-  // auto expand jika sub menu aktif
-  useEffect(() => {
-    menuItems.forEach((item) => {
-      if (item.subMenu) {
-        const activeSub = item.subMenu.find((sub) => sub.id === currentPage);
+  const handleParentClick = (item: any) => {
+    if (!item.subMenu) {
+      onPageChange(item.id);
+      return;
+    }
 
-        if (activeSub) {
-          setExpandedItems((prev) => new Set(prev).add(item.id));
-        }
-      }
+    const isExpanded = expandedItems.has(item.id);
+
+    if (isExpanded) {
+      setExpandedItems((prev) => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
+
+      return;
+    }
+
+    setExpandedItems((prev) => {
+      const next = new Set(prev);
+      next.add(item.id);
+      return next;
     });
-  }, [currentPage]);
+
+    const last = lastSubPage[item.id];
+    onPageChange(last || item.subMenu[0].id);
+  };
+
+  useEffect(() => {
+    const activeParent = menuItems.find((item) =>
+      item.subMenu?.some((sub) => sub.id === currentPage),
+    );
+
+    if (!activeParent) return;
+
+    setExpandedItems((prev) => {
+      if (prev.has(activeParent.id)) return prev;
+
+      const next = new Set(prev);
+      next.add(activeParent.id);
+      return next;
+    });
+  }, [currentPage, menuItems]);
 
   return (
     <aside
@@ -129,7 +161,6 @@ const Sidebar = ({
       <div className="pointer-events-none absolute -right-16 top-10 h-40 w-40 rounded-full bg-blue-500/10 blur-3xl" />
       <div className="pointer-events-none absolute -left-20 bottom-24 h-48 w-48 rounded-full bg-cyan-500/10 blur-3xl" />
 
-      {/* Logo */}
       <div
         className={`relative border-b border-blue-100/70 dark:border-slate-800 ${
           collapsed ? "px-3 py-4" : "p-4"
@@ -156,29 +187,15 @@ const Sidebar = ({
         </div>
       </div>
 
-      {/* Navigation */}
       <nav className="[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden relative flex-1 space-y-1.5 overflow-y-auto p-3">
         {menuItems.map((item) => {
           const active = isParentActive(item);
+          const expanded = expandedItems.has(item.id);
 
           return (
             <div key={item.id}>
               <button
-                onClick={() => {
-                  if (item.subMenu) {
-                    toggleExpanded(item.id);
-
-                    const last = lastSubPage[item.id];
-
-                    if (last) {
-                      onPageChange(last);
-                    } else {
-                      onPageChange(item.subMenu[0].id);
-                    }
-                  } else {
-                    onPageChange(item.id);
-                  }
-                }}
+                onClick={() => handleParentClick(item)}
                 className={`group relative flex min-h-11 items-center justify-between overflow-hidden rounded-2xl px-3 py-2.5 text-sm transition-all duration-300 ease-out ${
                   collapsed ? "w-11 justify-center" : "w-full"
                 } ${
@@ -213,19 +230,18 @@ const Sidebar = ({
                 {!collapsed && item.subMenu && (
                   <ChevronDown
                     className={`relative h-4 w-4 transition-all duration-300 ${
-                      expandedItems.has(item.id) ? "rotate-180" : "rotate-0"
+                      expanded ? "rotate-180" : "rotate-0"
                     } ${active ? "text-white/90" : "text-slate-400"}`}
                   />
                 )}
               </button>
 
-              {/* Sub Menu */}
               <div
                 className={`ml-5 mt-1.5 overflow-hidden border-l border-blue-100 pl-4 transition-all duration-300 dark:border-slate-800
                 ${
-                  !collapsed && item.subMenu && expandedItems.has(item.id)
-                    ? "max-h-96 opacity-100 translate-y-0"
-                    : "max-h-0 opacity-0 -translate-y-2 pointer-events-none"
+                  !collapsed && item.subMenu && expanded
+                    ? "max-h-96 translate-y-0 opacity-100"
+                    : "pointer-events-none max-h-0 -translate-y-2 opacity-0"
                 }`}
               >
                 <div className="space-y-1 py-1">

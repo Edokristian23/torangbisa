@@ -6,6 +6,18 @@ import { allowedNextStatuses, mapStatusLabel } from "@/lib/assessment";
 import { canReview } from "@/lib/authz";
 import { createAuditLog } from "@/lib/audit";
 
+const BPKP_ROLES = ["BPKP", "BPKP_ADMIN", "BPKP_REVIEWER"];
+
+function bludInputWhere() {
+  return {
+    OR: [
+      { createdByRole: null },
+      { createdByRole: "BLUD_OPERATOR" },
+      { createdByRole: "BLUD_ADMIN" },
+    ],
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const session = await auth();
@@ -130,6 +142,7 @@ export async function POST(request: Request) {
               bludId: period.bludId,
               year: period.year,
             },
+            ...bludInputWhere(),
           },
         });
 
@@ -149,6 +162,7 @@ export async function POST(request: Request) {
               year: period.year,
             },
             reviewStatus: "rejected",
+            ...bludInputWhere(),
           },
         });
 
@@ -173,6 +187,7 @@ export async function POST(request: Request) {
               year: period.year,
             },
             reviewStatus: "accepted",
+            ...bludInputWhere(),
           },
         });
 
@@ -189,7 +204,14 @@ export async function POST(request: Request) {
 
     if (action === "approve") {
       if (period.responses.length > 0) {
-        const allAccepted = period.responses.every(
+        const bludResponses = period.responses.filter((row) => {
+          const createdByRole = String(
+            row.createdByRole || "BLUD_OPERATOR",
+          ).toUpperCase();
+          return !BPKP_ROLES.includes(createdByRole);
+        });
+
+        const allAccepted = bludResponses.every(
           (row) => row.reviewStatus === "accepted",
         );
 
@@ -251,6 +273,7 @@ export async function POST(request: Request) {
           reviewStatus: {
             not: "accepted",
           },
+          ...bludInputWhere(),
         },
         data: {
           reviewStatus: "pending",

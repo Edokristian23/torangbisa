@@ -33,7 +33,17 @@ function toSafeJson<T>(value: T): T {
 }
 
 function isEvidenceRequired(criteriaScore: number) {
-  return criteriaScore > 2;
+  return criteriaScore > 1;
+}
+
+const BPKP_ROLES = ["BPKP", "BPKP_ADMIN", "BPKP_REVIEWER"];
+
+function isBpkpRole(role?: string | null) {
+  return BPKP_ROLES.includes(String(role || "").toUpperCase());
+}
+
+function isBpkpOwnedResponse(createdByRole?: string | null) {
+  return BPKP_ROLES.includes(String(createdByRole || "").toUpperCase());
 }
 
 export async function PATCH(
@@ -82,10 +92,12 @@ export async function PATCH(
       return NextResponse.json({ message: "Forbidden" }, { status: 403 });
     }
 
-    const canEditNormal = canMutateAssessment(
-      session.user.role,
-      existingResponse.assessmentPeriod.status,
-    );
+    const canEditNormal =
+      canMutateAssessment(
+        session.user.role,
+        existingResponse.assessmentPeriod.status,
+      ) ||
+      (isBpkpRole(role) && isBpkpOwnedResponse(existingResponse.createdByRole));
 
     const hasRejectTrace =
       rowStatus === "rejected" ||
@@ -142,7 +154,7 @@ export async function PATCH(
     if (isEvidenceRequired(criteriaScore) && documentIds.length === 0) {
       return NextResponse.json(
         {
-          message: "Upload Evidence wajib apabila skor parameter lebih dari 2.",
+          message: "Upload Evidence wajib apabila level parameter lebih dari 1.",
         },
         { status: 400 },
       );
@@ -368,10 +380,12 @@ export async function DELETE(
       return NextResponse.json({ message: "Forbidden" }, { status: 403 });
     }
 
-    const canEdit = canMutateAssessment(
-      session.user.role,
-      existingResponse.assessmentPeriod.status,
-    );
+    const canEdit =
+      canMutateAssessment(
+        session.user.role,
+        existingResponse.assessmentPeriod.status,
+      ) ||
+      (isBpkpRole(role) && isBpkpOwnedResponse(existingResponse.createdByRole));
 
     const rowStatus = String(existingResponse.reviewStatus || "").toLowerCase();
     const hasRejectTrace =

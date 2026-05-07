@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  isBpkpGlobalFilterRole,
+  useBpkpGlobalFilterStore,
+} from "../../stores/useBpkpGlobalFilterStore";
+import {
   AlertCircle,
   ClipboardCheck,
   Eye,
@@ -54,7 +58,16 @@ type FollowUpCard = {
   followUps: FollowUpEntry[];
 };
 
+type BludOption = {
+  id: string;
+  code: string;
+  name: string;
+};
+
 type Payload = {
+  blud?: BludOption | null;
+  bludOptions?: BludOption[];
+  source?: string;
   summary: {
     totalAoi: number;
     completedAoi: number;
@@ -162,12 +175,18 @@ function Modal({
   onClose,
   onSaved,
   isReadOnly = false,
+  selectedYear,
+  selectedBludCode = "",
+  fallbackBludCode = "",
 }: {
   card: FollowUpCard | null;
   open: boolean;
   onClose: () => void;
   onSaved: () => Promise<void>;
   isReadOnly?: boolean;
+  selectedYear: string;
+  selectedBludCode?: string;
+  fallbackBludCode?: string;
 }) {
   const [entries, setEntries] = useState<FollowUpEntry[]>([]);
   const [saving, setSaving] = useState(false);
@@ -301,6 +320,29 @@ function Modal({
   const MAX_FILE_SIZE = 1 * 1024 * 1024;
   const MAX_FILES_PER_ENTRY = 5;
 
+  const validateFiles = (filesToValidate: FileList) => {
+    const errors: string[] = [];
+    const validFiles: File[] = [];
+
+    Array.from(filesToValidate).forEach((file) => {
+      const extension = file.name.split(".").pop()?.toLowerCase() || "";
+
+      if (!ALLOWED_EXTENSIONS.includes(extension)) {
+        errors.push(`Format file ${file.name} tidak diizinkan.`);
+        return;
+      }
+
+      if (file.size > MAX_FILE_SIZE) {
+        errors.push(`Ukuran file ${file.name} melebihi 1MB.`);
+        return;
+      }
+
+      validFiles.push(file);
+    });
+
+    return { errors, validFiles };
+  };
+
   const isFormValid = () => {
     const filledEntries = entries.filter((entry) => {
       const v = getEntryValidation(entry);
@@ -390,6 +432,12 @@ function Modal({
       return;
     }
 
+    const { errors, validFiles } = validateFiles(files);
+    if (errors.length > 0) {
+      setError(errors.join(" "));
+      return;
+    }
+
     setUploadingIndex(index);
     setError(null);
 
@@ -397,7 +445,15 @@ function Modal({
       const formData = new FormData();
       formData.append("responseId", card.id);
       formData.append("customName", evidenceName);
-      Array.from(files).forEach((file) => formData.append("files", file));
+      const uploadBludCode = String(selectedBludCode || fallbackBludCode || "")
+        .trim()
+        .toUpperCase();
+
+      formData.append("year", selectedYear);
+      if (uploadBludCode) {
+        formData.append("bludCode", uploadBludCode);
+      }
+      Array.from(validFiles).forEach((file) => formData.append("files", file));
 
       const res = await fetch("/api/follow-ups/upload", {
         method: "POST",
@@ -407,7 +463,7 @@ function Modal({
       const json = await res.json();
 
       if (res.status === 409 && json?.conflict && json?.existingDocument) {
-        const firstFileName = Array.from(files)[0]?.name || "";
+        const firstFileName = validFiles[0]?.name || "";
 
         setExistingDocumentState({
           open: true,
@@ -1150,6 +1206,7 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
   const [isClientReady, setIsClientReady] = useState(false);
 
   const [selectedYear, setSelectedYear] = useState("2026");
+  const [selectedBludCode, setSelectedBludCode] = useState("");
   const [selectedModuleKey, setSelectedModuleKey] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -1158,6 +1215,9 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
   const [error, setError] = useState<string | null>(null);
   const [selectedCard, setSelectedCard] = useState<FollowUpCard | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const inFlightFetchKeyRef = useRef<string | null>(null);
+  const lastLoadedFetchKeyRef = useRef<string | null>(null);
+  const skipNextFetchRef = useRef(false);
 
   useEffect(() => {
     setIsClientReady(true);
@@ -1166,20 +1226,86 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
   const userRole = isClientReady
     ? String((session?.user as { role?: string } | undefined)?.role || "")
     : "";
-  const isAdminBludReviewOnly = isClientReady && userRole === "BLUD_ADMIN";
+  const roleUpper = userRole.toUpperCase();
+  const isBpkp =
+    roleUpper === "BPKP" ||
+    roleUpper === "BPKP_ADMIN" ||
+    roleUpper === "BPKP_REVIEWER";
+  const usesBpkpGlobalFilter = isBpkpGlobalFilterRole(userRole);
+  const {
+    selectedYear: globalSelectedYear,
+    selectedBludCode: globalSelectedBludCode,
+    setSelectedYear: setGlobalSelectedYear,
+    setSelectedBludCode: setGlobalSelectedBludCode,
+  } = useBpkpGlobalFilterStore();
+  const isAdminBludReviewOnly = isClientReady && roleUpper === "BLUD_ADMIN";
+  const bludOptions = Array.isArray(payload?.bludOptions)
+    ? payload.bludOptions
+    : [];
+  const showBludFilter =
+    isBpkp ||
+    String(payload?.source || "").toUpperCase() === "BPKP_SELF_ASSESSMENT" ||
+    bludOptions.length > 0;
 
-  const fetchData = async () => {
+  const effectiveSelectedYear = usesBpkpGlobalFilter
+    ? globalSelectedYear
+    : selectedYear;
+  const effectiveSelectedBludCode = usesBpkpGlobalFilter
+    ? globalSelectedBludCode
+    : selectedBludCode;
+
+  const fetchData = async (options?: { force?: boolean }) => {
+    if (!isClientReady) return;
+
+    const normalizedBludCode = String(effectiveSelectedBludCode || "")
+      .trim()
+      .toUpperCase();
+
+    /**
+     * Untuk role BPKP/Admin BPKP, request Tindak Lanjut harus langsung memakai
+     * BLUD dari global filter. Ini mencegah request awal tanpa bludCode seperti:
+     * /api/follow-ups?year=2026
+     * lalu disusul request kedua dengan bludCode yang tujuannya sama.
+     *
+     * Operator BLUD dan Admin BLUD tidak terpengaruh karena mereka tetap memakai
+     * konteks BLUD dari session/API seperti alur existing.
+     */
+    if (usesBpkpGlobalFilter && !normalizedBludCode) {
+      setLoading(false);
+      return;
+    }
+
+    const params = new URLSearchParams();
+    params.set("year", effectiveSelectedYear);
+    if (normalizedBludCode) {
+      params.set("bludCode", normalizedBludCode);
+    }
+    if (selectedModuleKey.trim()) {
+      params.set("moduleKey", selectedModuleKey.trim());
+    }
+
+    const requestKey = params.toString();
+
+    /**
+     * Mencegah request duplikat saat React StrictMode menjalankan effect dua kali
+     * di development. Refresh manual tetap bisa memaksa request terbaru dengan
+     * force: true. Perubahan filter tahun/BLUD otomatis membentuk requestKey baru,
+     * sehingga data langsung dimuat ulang tanpa harus klik Refresh Data.
+     */
+    if (
+      !options?.force &&
+      (inFlightFetchKeyRef.current === requestKey ||
+        lastLoadedFetchKeyRef.current === requestKey)
+    ) {
+      return;
+    }
+
+    inFlightFetchKeyRef.current = requestKey;
     setLoading(true);
     setError(null);
 
     try {
-      const params = new URLSearchParams();
-      params.set("year", selectedYear);
-      if (selectedModuleKey.trim()) {
-        params.set("moduleKey", selectedModuleKey.trim());
-      }
-
-      const res = await fetch(`/api/follow-ups?${params.toString()}`, {
+      const res = await fetch(`/api/follow-ups?${requestKey}`, {
         cache: "no-store",
       });
       const json = await res.json();
@@ -1189,20 +1315,44 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
       }
 
       setPayload(json);
+
+      const payloadBludCode = json?.blud?.code
+        ? String(json.blud.code).toUpperCase()
+        : "";
+
+      if (!normalizedBludCode && payloadBludCode && !usesBpkpGlobalFilter) {
+        skipNextFetchRef.current = true;
+        setSelectedBludCode(payloadBludCode);
+      }
+
+      lastLoadedFetchKeyRef.current = requestKey;
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Gagal memuat tindak lanjut.",
       );
       setPayload(null);
     } finally {
+      if (inFlightFetchKeyRef.current === requestKey) {
+        inFlightFetchKeyRef.current = null;
+      }
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    if (skipNextFetchRef.current) {
+      skipNextFetchRef.current = false;
+      return;
+    }
+
     void fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedYear, selectedModuleKey]);
+  }, [
+    isClientReady,
+    effectiveSelectedYear,
+    effectiveSelectedBludCode,
+    selectedModuleKey,
+  ]);
 
   const filteredItems = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -1274,14 +1424,49 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
           </div>
 
           <div className="inline-flex w-fit shrink-0 flex-nowrap items-center gap-2 rounded-[26px] border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm dark:border-slate-700 dark:bg-slate-800/50">
+            {showBludFilter ? (
+              <label className="inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-2xl bg-white px-3 shadow-sm ring-1 ring-slate-200/70 dark:bg-slate-900 dark:ring-slate-700">
+                <span className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                  BLUD
+                </span>
+
+                <select
+                  value={effectiveSelectedBludCode}
+                  onChange={(e) => {
+                    if (usesBpkpGlobalFilter) {
+                      setGlobalSelectedBludCode(e.target.value);
+                    } else {
+                      setSelectedBludCode(e.target.value);
+                    }
+                  }}
+                  className="max-w-[220px] cursor-pointer appearance-auto bg-transparent text-sm font-bold text-slate-800 outline-none dark:text-white"
+                >
+                  {bludOptions.length === 0 ? (
+                    <option value="">Pilih BLUD</option>
+                  ) : null}
+                  {bludOptions.map((blud) => (
+                    <option key={blud.id} value={blud.code}>
+                      {blud.code} - {blud.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
             <label className="inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-2xl bg-white px-3 shadow-sm ring-1 ring-slate-200/70 dark:bg-slate-900 dark:ring-slate-700">
               <span className="text-xs font-bold uppercase tracking-wide text-slate-400">
                 Tahun
               </span>
 
               <select
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(e.target.value)}
+                value={effectiveSelectedYear}
+                onChange={(e) => {
+                  if (usesBpkpGlobalFilter) {
+                    setGlobalSelectedYear(e.target.value);
+                  } else {
+                    setSelectedYear(e.target.value);
+                  }
+                }}
                 className="w-[70px] cursor-pointer appearance-auto bg-transparent text-sm font-bold text-slate-800 outline-none dark:text-white"
               >
                 {["2025", "2026", "2027", "2028"].map((year) => (
@@ -1293,7 +1478,7 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
             </label>
 
             <button
-              onClick={() => void fetchData()}
+              onClick={() => void fetchData({ force: true })}
               className="
     inline-flex h-11 shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap
     rounded-2xl px-4 text-sm font-bold text-white transition
@@ -1500,9 +1685,12 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onSaved={async () => {
-          await fetchData();
+          await fetchData({ force: true });
         }}
         isReadOnly={isAdminBludReviewOnly}
+        selectedYear={effectiveSelectedYear}
+        selectedBludCode={effectiveSelectedBludCode}
+        fallbackBludCode={payload?.blud?.code || ""}
       />
     </div>
   );

@@ -29,12 +29,15 @@ type ParameterInputRow = {
 };
 
 const BLUD_ROLES = new Set(["BLUD_ADMIN", "BLUD_OPERATOR"]);
-const BPKP_ROLES = new Set([
+const BPKP_VIEWER_ROLES = new Set([
+  "BPKP",
   "BPKP_ADMIN",
+  "BPKP_REVIEWER",
   "SUPER_ADMIN",
   "AUDITOR",
   "REVIEWER",
 ]);
+const BPKP_SELF_ASSESSMENT_ROLES = ["BPKP", "BPKP_ADMIN", "BPKP_REVIEWER"];
 
 const parameterDefinitions: ParameterMeta[] = Array.from(
   { length: 28 },
@@ -180,6 +183,26 @@ function buildAspectResults(
   });
 }
 
+function bludInputWhere() {
+  return {
+    OR: [
+      { createdByRole: null },
+      { createdByRole: "BLUD_OPERATOR" },
+      { createdByRole: "BLUD_ADMIN" },
+    ],
+  };
+}
+
+function bpkpSelfAssessmentWhere() {
+  return {
+    createdByRole: { in: BPKP_SELF_ASSESSMENT_ROLES },
+  };
+}
+
+function isBpkpAdminDashboard(role: string) {
+  return role === "BPKP_ADMIN" || role === "BPKP" || role === "BPKP_REVIEWER";
+}
+
 export async function GET(request: Request) {
   try {
     const session = await auth();
@@ -188,9 +211,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
     }
 
-    const role = String(session.user.role);
+    const role = String(session.user.role).toUpperCase();
     const isBludViewer = BLUD_ROLES.has(role);
-    const isBpkpViewer = BPKP_ROLES.has(role);
+    const isBpkpViewer = BPKP_VIEWER_ROLES.has(role);
+    const useBpkpSelfAssessmentRows = isBpkpAdminDashboard(role);
 
     if (!isBludViewer && !isBpkpViewer) {
       return NextResponse.json(
@@ -221,27 +245,6 @@ export async function GET(request: Request) {
     const totalBluds = await prisma.blud.count({
       where: { isActive: true },
     });
-
-    // BLUD dianggap telah mengisi SA hanya jika punya assessmentResponse
-    const filledBludIdsFromResponse = await prisma.assessmentResponse.findMany({
-      where: {
-        assessmentPeriod: {
-          year,
-          ...(moduleKey ? { moduleKey } : {}),
-        },
-      },
-      select: {
-        assessmentPeriod: {
-          select: {
-            bludId: true,
-          },
-        },
-      },
-    });
-
-    const filledBludIds = Array.from(
-      new Set(filledBludIdsFromResponse.map((r) => r.assessmentPeriod.bludId)),
-    );
 
     let scopedBludIds: string[] = [];
     let currentBludName: string | null = null;
@@ -279,9 +282,35 @@ export async function GET(request: Request) {
         : {}),
     };
 
+    const baseResponseSourceWhere = useBpkpSelfAssessmentRows
+      ? bpkpSelfAssessmentWhere()
+      : bludInputWhere();
+
+    const filledBludIdsFromResponse = await prisma.assessmentResponse.findMany({
+      where: {
+        assessmentPeriod: {
+          year,
+          ...(moduleKey ? { moduleKey } : {}),
+        },
+        ...baseResponseSourceWhere,
+      },
+      select: {
+        assessmentPeriod: {
+          select: {
+            bludId: true,
+          },
+        },
+      },
+    });
+
+    const filledBludIds = Array.from(
+      new Set(filledBludIdsFromResponse.map((r) => r.assessmentPeriod.bludId)),
+    );
+
     const scopedRows = await prisma.assessmentResponse.findMany({
       where: {
         assessmentPeriod: scopedPeriodWhere,
+        ...baseResponseSourceWhere,
       },
       select: {
         id: true,
@@ -317,6 +346,7 @@ export async function GET(request: Request) {
             ? { bludId: { in: filledBludIds } }
             : {}),
         },
+        ...baseResponseSourceWhere,
       },
       select: {
         id: true,
@@ -458,7 +488,9 @@ export async function GET(request: Request) {
 
     const infographicSourceRows = isBludViewer
       ? scopedRows
-      : allRowsForFilledBluds;
+      : useBpkpSelfAssessmentRows && selectedBludIds.length > 0
+        ? scopedRows
+        : allRowsForFilledBluds;
 
     const infographicResponseIds = infographicSourceRows.map((row) => row.id);
 
@@ -549,7 +581,7 @@ export async function GET(request: Request) {
 
     let summary;
 
-    if (isBludViewer) {
+    if (isBludViewer || (useBpkpSelfAssessmentRows && selectedBludIds.length > 0)) {
       summary = {
         totalResponses: filledBludIds.length,
         totalBluds,
@@ -606,11 +638,11 @@ export async function GET(request: Request) {
       summary,
       parameters,
       aspects,
-      bludScores: isBludViewer
-        ? bludScores
-        : selectedBludIds.length > 0
-          ? bludScores.filter((item) => selectedBludIds.includes(item.bludId))
-          : bludScores,
+      // Untuk Admin BPKP, grafik Perbandingan Skor Total Antar BLUD harus tetap global
+      // pada tahun yang sama, walaupun filter BLUD dipilih. Filter BLUD hanya
+      // memengaruhi kartu ringkasan seperti Parameter Terisi, Nilai Total, dan
+      // Nilai Capaian melalui objek summary di atas.
+      bludScores,
       infographics: {
         summary: infographicSummary,
         rows: infographicRows,
@@ -625,6 +657,7 @@ export async function GET(request: Request) {
         currentBludId: isBludViewer ? String(session.user.bludId || "") : null,
         currentBludName,
         canReviewAoi: role === "BLUD_ADMIN",
+        dataSource: useBpkpSelfAssessmentRows ? "BPKP_SELF_ASSESSMENT" : "BLUD_SELF_ASSESSMENT",
       },
     });
   } catch (error) {
