@@ -121,6 +121,7 @@ type DashboardViewer = {
   currentBludId: string | null;
   currentBludName: string | null;
   canReviewAoi: boolean;
+  dataSource?: "BPKP_SELF_ASSESSMENT" | "BLUD_SELF_ASSESSMENT";
 };
 
 type DashboardPayload = {
@@ -976,8 +977,6 @@ export default function EnterpriseAssessmentDashboard() {
     (item) => item.bludId === selectedBludId,
   );
 
-  // Filter section ini hanya untuk tampilan kartu Distribusi dan Ringkasan Status.
-  // Grafik perbandingan antar BLUD tetap global dan tidak ikut berubah saat BLUD dipilih.
   const filteredInfographicRows =
     canSelectBlud && selectedBludId
       ? infographicRows.filter((item) => item.bludId === selectedBludId)
@@ -1123,7 +1122,7 @@ export default function EnterpriseAssessmentDashboard() {
   const DEFAULT_BLUDS = [
     "RSCB",
     "RSUD Tobelo",
-    "RSUD Weda",
+    "RSUD Labuha",
     "RSUD Jailolo",
     "RSUD Tidore",
   ];
@@ -1261,9 +1260,26 @@ export default function EnterpriseAssessmentDashboard() {
     [summary],
   );
 
+  const getExportAssessmentSource = () => {
+    const role = String(payload?.viewer?.role || "").toUpperCase();
+
+    // Aturan Export PDF Dashboard:
+    // 1. Admin BPKP/BPKP/BPKP Reviewer mengambil hasil self assessment Admin BPKP.
+    // 2. Admin BLUD mengambil hasil self assessment Operator BLUD.
+    // 3. Operator BLUD mengambil hasil self assessment Operator BLUD.
+    // Parameter ini hanya dikirim saat export PDF dan tidak mengubah fetch dashboard,
+    // filter, grafik, cache, ataupun fungsi lain yang sudah berjalan.
+    if (["BPKP_ADMIN", "BPKP", "BPKP_REVIEWER"].includes(role)) {
+      return "BPKP_SELF_ASSESSMENT";
+    }
+
+    return "BLUD_OPERATOR_SELF_ASSESSMENT";
+  };
+
   const exportAssessmentPdf = () => {
     const params = new URLSearchParams();
     params.set("year", year);
+    params.set("assessmentSource", getExportAssessmentSource());
 
     if (selectedBludId) {
       params.set("bludIds", selectedBludId);

@@ -507,6 +507,9 @@ export async function GET(request: Request) {
       .filter(Boolean);
     const selectedBludId = selectedBludIds[0] || "";
     const bludCode = String(searchParams.get("bludCode") || "").toUpperCase();
+    const requestedAssessmentSource = String(
+      searchParams.get("assessmentSource") || "",
+    ).toUpperCase();
 
     if (!year) {
       return NextResponse.json(
@@ -523,6 +526,21 @@ export async function GET(request: Request) {
       "REVIEWER",
       "AUDITOR",
     ].includes(role);
+
+    const useBpkpSelfAssessmentRows =
+      requestedAssessmentSource === "BPKP_SELF_ASSESSMENT" ||
+      (!requestedAssessmentSource &&
+        ["BPKP", "BPKP_ADMIN", "BPKP_REVIEWER"].includes(role));
+
+    const responseSourceWhere = useBpkpSelfAssessmentRows
+      ? {
+          createdByRole: {
+            in: ["BPKP", "BPKP_ADMIN", "BPKP_REVIEWER"],
+          },
+        }
+      : {
+          createdByRole: "BLUD_OPERATOR",
+        };
 
     let bludId = session.user.bludId;
 
@@ -564,6 +582,7 @@ export async function GET(request: Request) {
       where: { bludId, year },
       include: {
         responses: {
+          where: responseSourceWhere,
           orderBy: [{ parameterId: "asc" }],
         },
       },
