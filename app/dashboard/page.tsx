@@ -176,7 +176,7 @@ const dashboardCache = new Map<string, DashboardCacheEntry>();
 let rejectedSummaryCache: RejectSummaryPayload | null = null;
 let rejectedSummaryChecked = false;
 
-export function notifyEnterpriseDashboardDataChanged() {
+function notifyEnterpriseDashboardDataChanged() {
   if (typeof window === "undefined") return;
 
   const version = String(Date.now());
