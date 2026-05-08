@@ -49,7 +49,7 @@ const HomeClient = ({ session }: any) => {
       case 'tindak-lanjut':
         return <TindakLanjut session={session} />;
       case 'panduan':
-        return <Panduan session={session} />;
+        return <Panduan />;
       case 'user':
         return <User />;
       default:

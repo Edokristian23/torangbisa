@@ -17,14 +17,20 @@ function isInlinePreviewable(mimeType: string) {
   return ['application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'text/plain'].includes(mimeType);
 }
 
+function safeAsciiFileName(value: string) {
+  return value.replace(/[\r\n"]/g, '_');
+}
+
 function buildHeaders(params: { mimeType: string; originalName: string; fileSize: number }) {
   const disposition = isInlinePreviewable(params.mimeType) ? 'inline' : 'attachment';
+  const safeName = safeAsciiFileName(params.originalName);
 
   return {
     'Content-Type': params.mimeType || 'application/octet-stream',
-    'Content-Disposition': `${disposition}; filename="${encodeURIComponent(params.originalName)}"`,
+    'Content-Disposition': `${disposition}; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(params.originalName)}`,
     'Content-Length': String(params.fileSize),
     'Cache-Control': 'private, max-age=60',
+    'X-Content-Type-Options': 'nosniff',
   };
 }
 

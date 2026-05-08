@@ -4,6 +4,7 @@ import { UserRole } from '@prisma/client';
 import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { createAuditLog } from '@/lib/audit';
+import { isGuideDocumentCategory } from '@/lib/guide-categories';
 
 const ADMIN_ROLES = new Set<UserRole>(['SUPER_ADMIN', 'BPKP_ADMIN']);
 
@@ -31,14 +32,19 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const body = await request.json();
     const name = String(body.name || '').trim();
     const description = String(body.description || '').trim();
+    const rawCategory = String(body.category || '').trim();
 
     if (!name) {
       return NextResponse.json({ message: 'Nama dokumen wajib diisi.' }, { status: 400 });
     }
 
+    if (!isGuideDocumentCategory(rawCategory)) {
+      return NextResponse.json({ message: 'Kategori panduan tidak valid.' }, { status: 400 });
+    }
+
     const previous = await prisma.guideDocument.findUnique({
       where: { id },
-      select: { id: true, name: true, description: true, isActive: true },
+      select: { id: true, category: true, name: true, description: true, isActive: true },
     });
 
     if (!previous || !previous.isActive) {
@@ -47,8 +53,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const updated = await prisma.guideDocument.update({
       where: { id },
-      data: { name, description: description || null },
-      select: { id: true, name: true, description: true, updatedAt: true },
+      data: { category: rawCategory, name, description: description || null },
+      select: { id: true, category: true, name: true, description: true, updatedAt: true },
     });
 
     await createAuditLog({
@@ -79,7 +85,7 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
 
     const previous = await prisma.guideDocument.findUnique({
       where: { id },
-      select: { id: true, name: true, isActive: true },
+      select: { id: true, category: true, name: true, isActive: true },
     });
 
     if (!previous || !previous.isActive) {
