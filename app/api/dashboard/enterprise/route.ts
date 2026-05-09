@@ -231,6 +231,9 @@ export async function GET(request: Request) {
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
+    const selectedBludCode = String(searchParams.get("bludCode") || "")
+      .trim()
+      .toUpperCase();
 
     const activeBluds = await prisma.blud.findMany({
       where: { isActive: true },
@@ -248,6 +251,11 @@ export async function GET(request: Request) {
 
     let scopedBludIds: string[] = [];
     let currentBludName: string | null = null;
+    const selectedBludByCode = selectedBludCode
+      ? activeBluds.find(
+          (item) => String(item.code || "").toUpperCase() === selectedBludCode,
+        )
+      : null;
 
     if (isBludViewer) {
       if (!session.user.bludId) {
@@ -267,6 +275,8 @@ export async function GET(request: Request) {
       currentBludName = currentBlud?.name || null;
     } else if (selectedBludIds.length > 0) {
       scopedBludIds = selectedBludIds;
+    } else if (selectedBludByCode?.id) {
+      scopedBludIds = [selectedBludByCode.id];
     }
 
     const scopedPeriodWhere: any = {
@@ -488,7 +498,7 @@ export async function GET(request: Request) {
 
     const infographicSourceRows = isBludViewer
       ? scopedRows
-      : useBpkpSelfAssessmentRows && selectedBludIds.length > 0
+      : useBpkpSelfAssessmentRows && scopedBludIds.length > 0
         ? scopedRows
         : allRowsForFilledBluds;
 
@@ -557,9 +567,9 @@ export async function GET(request: Request) {
       a.bludName.localeCompare(b.bludName),
     );
 
-    if (!isBludViewer && selectedBludIds.length > 0) {
+    if (!isBludViewer && scopedBludIds.length > 0) {
       infographicRows = infographicRows.filter((item) =>
-        selectedBludIds.includes(item.bludId),
+        scopedBludIds.includes(item.bludId),
       );
     }
 
@@ -581,7 +591,7 @@ export async function GET(request: Request) {
 
     let summary;
 
-    if (isBludViewer || (useBpkpSelfAssessmentRows && selectedBludIds.length > 0)) {
+    if (isBludViewer || (useBpkpSelfAssessmentRows && scopedBludIds.length > 0)) {
       summary = {
         totalResponses: filledBludIds.length,
         totalBluds,
@@ -649,7 +659,7 @@ export async function GET(request: Request) {
       },
       filters: {
         bluds: activeBluds,
-        selectedBludIds: isBludViewer ? [] : selectedBludIds,
+        selectedBludIds: isBludViewer ? [] : scopedBludIds,
       },
       viewer: {
         role,

@@ -43,6 +43,11 @@ enum GuideCategory {
   CONTOH_DOKUMEN
 }
 
+enum FollowUpStatus {
+  DONE
+  NOT_DONE
+}
+
 model Blud {
   id                String             @id @default(cuid())
   code              String             @unique
@@ -207,7 +212,9 @@ model FollowUpEntry {
   id                   String   @id @default(cuid())
   assessmentResponseId String
   description          String
-  sortOrder            Int      @default(0)
+  sortOrder            Int            @default(0)
+  followUpStatus       FollowUpStatus @default(DONE)
+  pendingReason        String?
   createdById          String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
@@ -217,6 +224,7 @@ model FollowUpEntry {
   documents          FollowUpEntryDocument[]
 
   @@index([assessmentResponseId])
+  @@index([followUpStatus])
   @@index([createdById])
 }
 

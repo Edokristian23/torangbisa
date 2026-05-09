@@ -19,11 +19,15 @@ type RawResponse = {
   bludName: string;
 };
 
+type FollowUpStatus = "DONE" | "NOT_DONE";
+
 type RawFollowUp = {
   id: string;
   assessmentResponseId: string;
   description: string;
   sortOrder: number;
+  followUpStatus: FollowUpStatus | string | null;
+  pendingReason: string | null;
 };
 
 type RawDocument = {
@@ -42,6 +46,12 @@ type NormalizedFollowUpEntry = {
   sortOrder: number;
 };
 
+function normalizeFollowUpStatus(value?: string | null): FollowUpStatus {
+  return String(value || "DONE").toUpperCase() === "NOT_DONE"
+    ? "NOT_DONE"
+    : "DONE";
+}
+
 const BPKP_ROLES = ["BPKP", "BPKP_ADMIN", "BPKP_REVIEWER"];
 
 function normalizeRole(role?: string | null) {
@@ -54,6 +64,18 @@ function isBpkpRole(role?: string | null) {
 
 function isBpkpOwnedResponse(createdByRole?: string | null) {
   return BPKP_ROLES.includes(normalizeRole(createdByRole));
+}
+
+function canUseExistingDocumentAcrossModules(role?: string | null) {
+  const roleUpper = normalizeRole(role);
+
+  return (
+    roleUpper === "BLUD_OPERATOR" ||
+    roleUpper === "BLUD_ADMIN" ||
+    roleUpper === "BPKP" ||
+    roleUpper === "BPKP_ADMIN" ||
+    roleUpper === "BPKP_REVIEWER"
+  );
 }
 
 function serializeDocument(link: RawDocument) {
@@ -113,7 +135,7 @@ function extractDocumentIds(entry: any): string[] {
 
 async function getBludOptions() {
   const bluds = await prisma.blud.findMany({
-    orderBy: [{ name: "asc" }, { code: "asc" }],
+    orderBy: [{ code: "asc" }, { name: "asc" }],
     select: {
       id: true,
       code: true,
@@ -235,7 +257,9 @@ export async function GET(request: Request) {
                fu."id",
                fu."assessmentResponseId",
                fu."description",
-               fu."sortOrder"
+               fu."sortOrder",
+               COALESCE(fu."followUpStatus", 'DONE') AS "followUpStatus",
+               fu."pendingReason"
              FROM "FollowUpEntry" fu
              WHERE fu."assessmentResponseId" IN (${responseIds
                .map((id) => `'${id.replace(/'/g, "''")}'`)
@@ -273,6 +297,8 @@ export async function GET(request: Request) {
         id: string;
         description: string;
         sortOrder: number;
+        followUpStatus: FollowUpStatus;
+        pendingReason: string | null;
         documents: ReturnType<typeof serializeDocument>[];
       }>
     >();
@@ -283,6 +309,8 @@ export async function GET(request: Request) {
         id: entry.id,
         description: entry.description,
         sortOrder: entry.sortOrder,
+        followUpStatus: normalizeFollowUpStatus(entry.followUpStatus),
+        pendingReason: entry.pendingReason,
         documents: documentsByFollowUpId.get(entry.id) || [],
       });
       followUpsByResponseId.set(entry.assessmentResponseId, list);
@@ -290,6 +318,13 @@ export async function GET(request: Request) {
 
     const items = responses.map((row) => {
       const rowFollowUps = followUpsByResponseId.get(row.id) || [];
+      const doneFollowUps = rowFollowUps.filter(
+        (entry) => entry.followUpStatus === "DONE",
+      );
+      const notDoneEntry = rowFollowUps.find(
+        (entry) => entry.followUpStatus === "NOT_DONE",
+      );
+
       return {
         id: row.id,
         parameterId: row.parameterId,
@@ -304,9 +339,11 @@ export async function GET(request: Request) {
           code: row.bludCode,
           name: row.bludName,
         },
-        isCompleted: rowFollowUps.length > 0,
-        followUpCount: rowFollowUps.length,
-        followUps: rowFollowUps,
+        followUpStatus: doneFollowUps.length > 0 ? "DONE" : notDoneEntry ? "NOT_DONE" : null,
+        pendingReason: notDoneEntry?.pendingReason || notDoneEntry?.description || "",
+        isCompleted: doneFollowUps.length > 0,
+        followUpCount: doneFollowUps.length,
+        followUps: doneFollowUps,
       };
     });
 
@@ -341,8 +378,10 @@ export async function POST(request: Request) {
     const body = await request.json();
     const responseId = String(body.responseId || "");
     const entries = Array.isArray(body.entries) ? body.entries : [];
+    const followUpStatus = normalizeFollowUpStatus(body.followUpStatus);
+    const pendingReason = String(body.pendingReason || "").trim();
 
-    if (!responseId || entries.length === 0) {
+    if (!responseId || (followUpStatus === "DONE" && entries.length === 0)) {
       return NextResponse.json(
         { message: "Data tindak lanjut tidak lengkap." },
         { status: 400 },
@@ -391,17 +430,27 @@ export async function POST(request: Request) {
       }
     }
 
-    const normalizedEntries: NormalizedFollowUpEntry[] = entries
-      .map((entry: any, index: number): NormalizedFollowUpEntry => ({
-        description: String(entry.description || "").trim(),
-        documentIds: extractDocumentIds(entry),
-        sortOrder: index + 1,
-      }))
-      .filter((entry) => entry.description.length > 0);
+    const normalizedEntries: NormalizedFollowUpEntry[] =
+      followUpStatus === "DONE"
+        ? entries
+            .map((entry: any, index: number): NormalizedFollowUpEntry => ({
+              description: String(entry.description || "").trim(),
+              documentIds: extractDocumentIds(entry),
+              sortOrder: index + 1,
+            }))
+            .filter((entry) => entry.description.length > 0)
+        : [];
 
-    if (normalizedEntries.length === 0) {
+    if (followUpStatus === "DONE" && normalizedEntries.length === 0) {
       return NextResponse.json(
         { message: "Minimal satu uraian tindak lanjut wajib diisi." },
+        { status: 400 },
+      );
+    }
+
+    if (followUpStatus === "NOT_DONE" && pendingReason.length === 0) {
+      return NextResponse.json(
+        { message: "Uraian alasan belum ditindaklanjuti wajib diisi." },
         { status: 400 },
       );
     }
@@ -413,26 +462,36 @@ export async function POST(request: Request) {
     );
 
     if (documentIds.length > 0) {
-      const validDocuments = responseOwnedByBpkp
-        ? await prisma.$queryRawUnsafe<Array<{ id: string }>>(
-            `SELECT DISTINCT d."id"
-             FROM "AssessmentDocument" d
-             INNER JOIN "AssessmentPeriod" ap ON ap."id" = d."assessmentPeriodId"
-             LEFT JOIN "AssessmentResponseDocument" ard ON ard."documentId" = d."id"
-             LEFT JOIN "AssessmentResponse" ar ON ar."id" = ard."responseId"
-             LEFT JOIN "FollowUpEntryDocument" fud ON fud."documentId" = d."id"
-             LEFT JOIN "FollowUpEntry" fu ON fu."id" = fud."followUpEntryId"
-             LEFT JOIN "AssessmentResponse" fur ON fur."id" = fu."assessmentResponseId"
-             WHERE d."id" IN (${sqlStringList(documentIds)})
-               AND ap."bludId" = '${response.assessmentPeriod.bludId.replace(/'/g, "''")}'
-               AND ap."year" = ${Number(response.assessmentPeriod.year)}
-               AND (
-                 d."assessmentPeriodId" = '${response.assessmentPeriodId.replace(/'/g, "''")}'
-                 OR ar."createdByRole" IN ('BPKP', 'BPKP_ADMIN', 'BPKP_REVIEWER')
-                 OR fur."createdByRole" IN ('BPKP', 'BPKP_ADMIN', 'BPKP_REVIEWER')
-                 OR d."sourceParameter" ILIKE 'BPKP TL Evidence%'
-               )`,
-          )
+      /**
+       * Fix existing evidence lintas modul/aspek untuk menu Tindak Lanjut.
+       *
+       * Sebelumnya role BLUD hanya valid jika dokumen berasal dari
+       * assessmentPeriodId yang sama. Akibatnya, saat operator/admin BLUD
+       * memilih "Gunakan Dokumen Existing" dari modul/aspek lain, simpan
+       * tindak lanjut bisa gagal 400 walaupun dokumen masih dalam BLUD dan
+       * tahun assessment yang sama.
+       *
+       * Aturan baru:
+       * - BLUD_OPERATOR dan BLUD_ADMIN boleh memakai existing evidence lintas
+       *   modul/aspek selama masih dalam BLUD yang sama dan tahun yang sama.
+       * - BPKP / BPKP_ADMIN / BPKP_REVIEWER tetap memakai aturan lintas modul
+       *   yang sudah berjalan.
+       * - Role lain tetap memakai validasi lama berbasis assessmentPeriodId.
+       */
+      const allowExistingDocumentAcrossModules =
+        canUseExistingDocumentAcrossModules(role);
+
+      const validDocuments = allowExistingDocumentAcrossModules
+        ? await prisma.assessmentDocument.findMany({
+            where: {
+              id: { in: documentIds },
+              assessmentPeriod: {
+                bludId: response.assessmentPeriod.bludId,
+                year: response.assessmentPeriod.year,
+              },
+            },
+            select: { id: true },
+          })
         : await prisma.assessmentDocument.findMany({
             where: {
               id: { in: documentIds },
@@ -444,7 +503,9 @@ export async function POST(request: Request) {
       if (validDocuments.length !== documentIds.length) {
         return NextResponse.json(
           {
-            message: "Sebagian evidence tidak valid untuk periode assessment ini.",
+            message: allowExistingDocumentAcrossModules
+              ? "Sebagian evidence tidak valid untuk BLUD dan tahun assessment ini."
+              : "Sebagian evidence tidak valid untuk periode assessment ini.",
           },
           { status: 400 },
         );
@@ -471,18 +532,26 @@ export async function POST(request: Request) {
         WHERE "assessmentResponseId" = ${responseId}
       `;
 
-      for (const entry of normalizedEntries) {
+      if (followUpStatus === "NOT_DONE") {
         const followUpEntryId = randomUUID();
         await tx.$executeRaw`
-          INSERT INTO "FollowUpEntry" ("id", "assessmentResponseId", "description", "sortOrder", "createdById", "createdAt", "updatedAt")
-          VALUES (${followUpEntryId}, ${responseId}, ${entry.description}, ${entry.sortOrder}, ${session.user.id}, NOW(), NOW())
+          INSERT INTO "FollowUpEntry" ("id", "assessmentResponseId", "description", "sortOrder", "createdById", "followUpStatus", "pendingReason", "createdAt", "updatedAt")
+          VALUES (${followUpEntryId}, ${responseId}, ${pendingReason}, 1, ${session.user.id}, 'NOT_DONE', ${pendingReason}, NOW(), NOW())
         `;
-
-        for (const documentId of entry.documentIds) {
+      } else {
+        for (const entry of normalizedEntries) {
+          const followUpEntryId = randomUUID();
           await tx.$executeRaw`
-            INSERT INTO "FollowUpEntryDocument" ("followUpEntryId", "documentId", "createdAt")
-            VALUES (${followUpEntryId}, ${documentId}, NOW())
+            INSERT INTO "FollowUpEntry" ("id", "assessmentResponseId", "description", "sortOrder", "createdById", "followUpStatus", "pendingReason", "createdAt", "updatedAt")
+            VALUES (${followUpEntryId}, ${responseId}, ${entry.description}, ${entry.sortOrder}, ${session.user.id}, 'DONE', NULL, NOW(), NOW())
           `;
+
+          for (const documentId of entry.documentIds) {
+            await tx.$executeRaw`
+              INSERT INTO "FollowUpEntryDocument" ("followUpEntryId", "documentId", "createdAt")
+              VALUES (${followUpEntryId}, ${documentId}, NOW())
+            `;
+          }
         }
       }
     });
@@ -500,7 +569,8 @@ export async function POST(request: Request) {
       nextState: body,
       metadata: {
         assessmentPeriodId: response.assessmentPeriodId,
-        entryCount: normalizedEntries.length,
+        entryCount: followUpStatus === "DONE" ? normalizedEntries.length : 0,
+        followUpStatus,
         responseOwner: responseOwnedByBpkp ? "BPKP" : "BLUD",
       },
     });

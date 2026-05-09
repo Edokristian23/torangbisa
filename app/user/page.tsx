@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { KeyRound, Plus, RefreshCw, Shield, ToggleLeft, ToggleRight, UserCog } from "lucide-react";
 
 const ROLE_OPTIONS = ["SUPER_ADMIN", "BPKP_ADMIN", "BPKP_REVIEWER", "BLUD_ADMIN", "BLUD_OPERATOR", "AUDITOR"];
@@ -28,6 +28,25 @@ type BludItem = {
   name: string;
 };
 
+type UsersPayload = {
+  users: UserItem[];
+  bluds: BludItem[];
+};
+
+let initialUsersRequest: Promise<UsersPayload> | null = null;
+
+async function requestUsers() {
+  const response = await fetch("/api/users", { cache: "no-store" });
+  const payload = await response.json();
+
+  if (!response.ok) throw new Error(payload?.message || "Gagal memuat user.");
+
+  return {
+    users: Array.isArray(payload.users) ? payload.users : [],
+    bluds: Array.isArray(payload.bluds) ? payload.bluds : [],
+  };
+}
+
 export default function UserPage() {
   const [users, setUsers] = useState<UserItem[]>([]);
   const [bluds, setBluds] = useState<BludItem[]>([]);
@@ -45,16 +64,21 @@ export default function UserPage() {
     mustChangePassword: true,
   });
 
-  const loadUsers = async () => {
+  const didRequestInitialUsers = useRef(false);
+
+  const loadUsers = async (options?: { reuseInitialRequest?: boolean }) => {
     setLoading(true);
     setError(null);
+
     try {
-      const response = await fetch("/api/users", { cache: "no-store" });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.message || "Gagal memuat user.");
-      setUsers(payload.users || []);
-      setBluds(payload.bluds || []);
+      const payload = await (options?.reuseInitialRequest
+        ? (initialUsersRequest ??= requestUsers())
+        : requestUsers());
+
+      setUsers(payload.users);
+      setBluds(payload.bluds);
     } catch (err) {
+      if (options?.reuseInitialRequest) initialUsersRequest = null;
       setError(err instanceof Error ? err.message : "Gagal memuat user.");
     } finally {
       setLoading(false);
@@ -62,7 +86,10 @@ export default function UserPage() {
   };
 
   useEffect(() => {
-    void loadUsers();
+    if (didRequestInitialUsers.current) return;
+    didRequestInitialUsers.current = true;
+
+    void loadUsers({ reuseInitialRequest: true });
   }, []);
 
   const createUser = async () => {
@@ -76,6 +103,7 @@ export default function UserPage() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.message || "Gagal membuat user.");
+      initialUsersRequest = null;
       setUsers((prev) => [payload.user, ...prev]);
       setMessage("User berhasil dibuat.");
       setShowCreate(false);
@@ -104,6 +132,7 @@ export default function UserPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.message || "Gagal memperbarui user.");
+      initialUsersRequest = null;
       setUsers((prev) => prev.map((user) => (user.id === id ? data.user : user)));
       setMessage(successMessage);
     } catch (err) {

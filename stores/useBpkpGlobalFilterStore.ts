@@ -3,17 +3,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-/**
- * Global filter khusus role Admin BPKP/BPKP Reviewer/BPKP.
- *
- * Dipakai bersama oleh:
- * - Dashboard
- * - Assessment (Perencanaan, Kapabilitas, Hasil)
- * - Tindak Lanjut
- *
- * Tidak mengubah scope BLUD_OPERATOR dan BLUD_ADMIN karena komponen tetap
- * memakai filter ini hanya saat userRole termasuk BPKP.
- */
 type BpkpGlobalFilterState = {
   selectedYear: string;
   selectedBludId: string;
@@ -40,6 +29,15 @@ export function isBpkpGlobalFilterRole(role?: string | null) {
   return BPKP_GLOBAL_FILTER_ROLES.has(String(role || "").toUpperCase());
 }
 
+function normalizeYear(year?: string | number | null) {
+  const value = String(year || "").trim();
+  return value || String(new Date().getFullYear());
+}
+
+function normalizeCode(code?: string | null) {
+  return String(code || "").trim().toUpperCase();
+}
+
 export const useBpkpGlobalFilterStore = create<BpkpGlobalFilterState>()(
   persist(
     (set) => ({
@@ -49,29 +47,41 @@ export const useBpkpGlobalFilterStore = create<BpkpGlobalFilterState>()(
       selectedBludName: "",
 
       setSelectedYear: (year) =>
-        set({ selectedYear: String(year || new Date().getFullYear()) }),
+        set({
+          selectedYear: normalizeYear(year),
+        }),
 
       setSelectedBlud: (blud) =>
         set({
           selectedBludId: blud?.id ? String(blud.id) : "",
-          selectedBludCode: blud?.code ? String(blud.code).toUpperCase() : "",
+          selectedBludCode: blud?.code ? normalizeCode(blud.code) : "",
           selectedBludName: blud?.name ? String(blud.name) : "",
         }),
 
       setSelectedBludId: (id) =>
-        set({
-          selectedBludId: String(id || ""),
-          ...(id ? {} : { selectedBludCode: "", selectedBludName: "" }),
+        set((state) => {
+          const nextId = String(id || "").trim();
+
+          return {
+            selectedBludId: nextId,
+            selectedBludCode: nextId ? state.selectedBludCode : "",
+            selectedBludName: nextId ? state.selectedBludName : "",
+          };
         }),
 
       setSelectedBludCode: (code) =>
         set({
-          selectedBludCode: String(code || "").toUpperCase(),
-          ...(code ? {} : { selectedBludId: "", selectedBludName: "" }),
+          selectedBludId: "",
+          selectedBludCode: normalizeCode(code),
+          selectedBludName: "",
         }),
 
       clearSelectedBlud: () =>
-        set({ selectedBludId: "", selectedBludCode: "", selectedBludName: "" }),
+        set({
+          selectedBludId: "",
+          selectedBludCode: "",
+          selectedBludName: "",
+        }),
     }),
     {
       name: "bpkp-global-assessment-filter",

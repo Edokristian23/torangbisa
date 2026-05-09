@@ -46,6 +46,18 @@ function isBpkpOwnedResponse(createdByRole?: string | null) {
   return BPKP_ROLES.includes(String(createdByRole || "").toUpperCase());
 }
 
+function canUseExistingDocumentAcrossModules(role?: string | null) {
+  const roleUpper = String(role || "").toUpperCase();
+
+  return (
+    roleUpper === "BLUD_OPERATOR" ||
+    roleUpper === "BLUD_ADMIN" ||
+    roleUpper === "BPKP" ||
+    roleUpper === "BPKP_ADMIN" ||
+    roleUpper === "BPKP_REVIEWER"
+  );
+}
+
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> },
@@ -163,10 +175,41 @@ export async function PATCH(
     let validDocuments: Array<{ id: string }> = [];
 
     if (documentIds.length > 0) {
+      /**
+       * Fix existing document lintas modul/aspek untuk edit row.
+       *
+       * Sebelumnya dokumen hanya dianggap valid bila assessmentPeriodId sama
+       * dengan periode module yang sedang diedit. Akibatnya saat user memilih
+       * "Gunakan Dokumen Existing" dari module/aspek lain, PATCH
+       * /api/assessments/[id] mengembalikan 400 walaupun dokumen masih milik
+       * BLUD dan tahun yang sama.
+       *
+       * Aturan:
+       * - BLUD_OPERATOR dan BLUD_ADMIN boleh memakai existing document lintas
+       *   module/aspek selama masih dalam BLUD yang sama dan tahun yang sama.
+       * - BPKP / BPKP_ADMIN / BPKP_REVIEWER boleh memakai existing document
+       *   lintas module/aspek selama masih dalam BLUD yang sama dan tahun yang
+       *   sama.
+       *
+       * Role lain tetap memakai validasi lama berbasis assessmentPeriodId
+       * current module agar fungsi lain yang sudah berjalan tidak terganggu.
+       */
+      const allowExistingDocumentAcrossModules =
+        canUseExistingDocumentAcrossModules(role);
+
       validDocuments = await prisma.assessmentDocument.findMany({
         where: {
           id: { in: documentIds },
-          assessmentPeriodId: existingResponse.assessmentPeriodId,
+          ...(allowExistingDocumentAcrossModules
+            ? {
+                assessmentPeriod: {
+                  bludId: existingResponse.assessmentPeriod.bludId,
+                  year: existingResponse.assessmentPeriod.year,
+                },
+              }
+            : {
+                assessmentPeriodId: existingResponse.assessmentPeriodId,
+              }),
         },
         select: { id: true },
       });
@@ -174,8 +217,9 @@ export async function PATCH(
       if (validDocuments.length !== documentIds.length) {
         return NextResponse.json(
           {
-            message:
-              "Sebagian dokumen tidak valid untuk periode assessment ini.",
+            message: allowExistingDocumentAcrossModules
+              ? "Sebagian dokumen tidak valid untuk BLUD dan tahun assessment ini."
+              : "Sebagian dokumen tidak valid untuk periode assessment ini.",
           },
           { status: 400 },
         );

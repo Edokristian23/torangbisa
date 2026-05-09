@@ -1,5 +1,6 @@
-import { create } from "zustand";
-import { persist } from "zustand/middleware";
+"use client";
+
+import { useBpkpGlobalFilterStore } from "./useBpkpGlobalFilterStore";
 
 type EnterpriseDashboardFilterState = {
   selectedBludId: string;
@@ -7,16 +8,17 @@ type EnterpriseDashboardFilterState = {
   clearSelectedBludId: () => void;
 };
 
-export const useEnterpriseDashboardFilterStore = create<EnterpriseDashboardFilterState>()(
-  persist(
-    (set) => ({
-      selectedBludId: "",
-      setSelectedBludId: (bludId) => set({ selectedBludId: bludId }),
-      clearSelectedBludId: () => set({ selectedBludId: "" }),
-    }),
-    {
-      name: "enterprise-dashboard-filter-store",
-      partialize: (state) => ({ selectedBludId: state.selectedBludId }),
-    },
-  ),
-);
+export const useEnterpriseDashboardFilterStore = ((selector?: any) => {
+  const mappedSelector =
+    typeof selector === "function"
+      ? (state: any): EnterpriseDashboardFilterState => ({
+          selectedBludId: state.selectedBludId,
+          setSelectedBludId: state.setSelectedBludId,
+          clearSelectedBludId: state.clearSelectedBlud,
+        })
+      : undefined;
+
+  return useBpkpGlobalFilterStore(mappedSelector as any);
+}) as typeof useBpkpGlobalFilterStore & {
+  <T>(selector: (state: EnterpriseDashboardFilterState) => T): T;
+};

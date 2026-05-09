@@ -189,8 +189,8 @@ function getDashboardDataVersion() {
   return localStorage.getItem(DASHBOARD_DATA_VERSION_KEY) || "initial";
 }
 
-function getDashboardCacheKey(year: string, bludId?: string) {
-  return `enterprise-dashboard:${year}:${bludId || "global"}`;
+function getDashboardCacheKey(year: string, bludId?: string, bludCode?: string) {
+  return `enterprise-dashboard:${year}:${bludId || bludCode || "global"}`;
 }
 
 function formatNumber(value: number, digits = 2) {
@@ -249,11 +249,13 @@ function BludPillDropdown({
   options,
   onChange,
   compact = false,
+  hideAllOption = false,
 }: {
   value: string;
   options: BludFilterOption[];
   onChange: (value: string) => void;
   compact?: boolean;
+  hideAllOption?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -269,7 +271,9 @@ function BludPillDropdown({
   const selectedOption = options.find((item) => item.id === value);
   const selectedLabel = selectedOption
     ? selectedOption.name || selectedOption.code || "BLUD"
-    : "Semua";
+    : hideAllOption
+      ? options[0]?.name || "BLUD"
+      : "Semua";
 
   const buttonWidth = 180;
   const menuWidth = 260;
@@ -336,20 +340,22 @@ function BludPillDropdown({
               width: menuStyle.width,
             }}
           >
-            <div
-              aria-disabled="true"
-              title="Semua BLUD hanya sebagai tampilan global, tidak bisa dipilih dari dropdown ini."
-              className={`flex w-full cursor-not-allowed select-none items-center justify-between gap-3 px-4 py-2.5 text-left text-[13px] font-black opacity-80 ${
-                value === ""
-                  ? "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
-                  : "bg-slate-50 text-slate-500 dark:bg-slate-800/70 dark:text-slate-400"
-              }`}
-            >
-              <span className="truncate">Semua BLUD</span>
-              {value === "" ? (
-                <span className="h-2 w-2 rounded-full bg-blue-600" />
-              ) : null}
-            </div>
+            {!hideAllOption ? (
+              <div
+                aria-disabled="true"
+                title="Semua BLUD hanya sebagai tampilan global, tidak bisa dipilih dari dropdown ini."
+                className={`flex w-full cursor-not-allowed select-none items-center justify-between gap-3 px-4 py-2.5 text-left text-[13px] font-black opacity-80 ${
+                  value === ""
+                    ? "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+                    : "bg-slate-50 text-slate-500 dark:bg-slate-800/70 dark:text-slate-400"
+                }`}
+              >
+                <span className="truncate">Semua BLUD</span>
+                {value === "" ? (
+                  <span className="h-2 w-2 rounded-full bg-blue-600" />
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="max-h-72 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
               {options.map((item) => {
@@ -689,6 +695,12 @@ export default function EnterpriseAssessmentDashboard() {
   const clearSelectedBlud = useBpkpGlobalFilterStore(
     (state) => state.clearSelectedBlud,
   );
+  const selectedBludCode = useBpkpGlobalFilterStore(
+    (state) => state.selectedBludCode,
+  );
+  const selectedBludName = useBpkpGlobalFilterStore(
+    (state) => state.selectedBludName,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [payload, setPayload] = useState<DashboardPayload | null>(null);
@@ -766,7 +778,7 @@ export default function EnterpriseAssessmentDashboard() {
   }) => {
     const selectedYear = options?.targetYear ?? year;
     const force = Boolean(options?.force);
-    const cacheKey = getDashboardCacheKey(selectedYear, selectedBludId);
+    const cacheKey = getDashboardCacheKey(selectedYear, selectedBludId, selectedBludCode);
     const currentDataVersion = getDashboardDataVersion();
     const cached = dashboardCache.get(cacheKey);
 
@@ -785,6 +797,8 @@ export default function EnterpriseAssessmentDashboard() {
       params.set("year", selectedYear);
       if (selectedBludId) {
         params.set("bludIds", selectedBludId);
+      } else if (selectedBludCode) {
+        params.set("bludCode", selectedBludCode);
       }
 
       const res = await fetch(
@@ -890,13 +904,13 @@ export default function EnterpriseAssessmentDashboard() {
 
     void fetchDashboard({ targetYear: year });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFilterHydrated, year, selectedBludId]);
+  }, [isFilterHydrated, year, selectedBludId, selectedBludCode, selectedBludName]);
 
   useEffect(() => {
     const handleDataChanged = () => {
       if (!isFilterHydrated) return;
 
-      dashboardCache.delete(getDashboardCacheKey(year, selectedBludId));
+      dashboardCache.delete(getDashboardCacheKey(year, selectedBludId, selectedBludCode));
       rejectedSummaryChecked = false;
       rejectedSummaryCache = null;
 
@@ -927,7 +941,7 @@ export default function EnterpriseAssessmentDashboard() {
       window.removeEventListener("storage", handleStorageChanged);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFilterHydrated, payload, year, selectedBludId]);
+  }, [isFilterHydrated, payload, year, selectedBludId, selectedBludCode, selectedBludName]);
 
   useEffect(() => {
     if (!payload?.viewer) return;
@@ -958,20 +972,98 @@ export default function EnterpriseAssessmentDashboard() {
   const bludFilters = payload?.filters?.bluds ?? [];
   const canSelectBlud = Boolean(payload?.viewer && !payload.viewer.isBludScoped);
   const viewerRole = String(payload?.viewer?.role || "").toUpperCase();
+  const isAdminBpkpDashboard = ["BPKP", "BPKP_ADMIN", "BPKP_REVIEWER"].includes(viewerRole);
   const shouldShowParameterDetail = viewerRole !== "BPKP_ADMIN";
 
   useEffect(() => {
-    if (!canSelectBlud) return;
-    if (!selectedBludId || bludFilters.length === 0) return;
+    if (!canSelectBlud || bludFilters.length === 0) return;
 
-    const isSelectedBludStillAvailable = bludFilters.some(
-      (item) => item.id === selectedBludId,
-    );
+    /**
+     * Dashboard harus mengikuti global filter yang sama dengan Assessment dan
+     * Tindak Lanjut. Assessment/Tindak Lanjut dapat menyimpan BLUD melalui
+     * code/name, sementara Dashboard select memakai id. Karena itu Dashboard
+     * selalu menyelaraskan id, code, dan name setiap kali global filter berubah.
+     */
+    const normalizedGlobalCode = String(selectedBludCode || "")
+      .trim()
+      .toUpperCase();
+    const normalizedGlobalName = String(selectedBludName || "")
+      .trim()
+      .toUpperCase();
 
-    if (!isSelectedBludStillAvailable) {
-      clearSelectedBlud();
+    const matchedByCodeOrName = bludFilters.find((item) => {
+      const codeMatches =
+        normalizedGlobalCode &&
+        String(item.code || "").toUpperCase() === normalizedGlobalCode;
+
+      const nameMatches =
+        normalizedGlobalName &&
+        String(item.name || "").toUpperCase() === normalizedGlobalName;
+
+      return codeMatches || nameMatches;
+    });
+
+    if (matchedByCodeOrName && matchedByCodeOrName.id !== selectedBludId) {
+      setSelectedBlud(matchedByCodeOrName);
+      return;
     }
-  }, [bludFilters, canSelectBlud, clearSelectedBlud, selectedBludId]);
+
+    if (!selectedBludId) return;
+
+    const selectedBlud = bludFilters.find((item) => item.id === selectedBludId);
+
+    if (!selectedBlud) {
+      clearSelectedBlud();
+      return;
+    }
+
+    const shouldRepairGlobalBludMeta =
+      String(selectedBlud.code || "").toUpperCase() !== normalizedGlobalCode ||
+      String(selectedBlud.name || "").toUpperCase() !== normalizedGlobalName;
+
+    if (shouldRepairGlobalBludMeta) {
+      setSelectedBlud(selectedBlud);
+    }
+  }, [
+    bludFilters,
+    canSelectBlud,
+    clearSelectedBlud,
+    selectedBludCode,
+    selectedBludId,
+    selectedBludName,
+    setSelectedBlud,
+  ]);
+
+  useEffect(() => {
+    if (!isAdminBpkpDashboard || !canSelectBlud || bludFilters.length === 0) {
+      return;
+    }
+
+    /**
+     * Khusus Admin BPKP:
+     * - opsi "Semua BLUD" tidak dipakai di dashboard
+     * - jika belum ada filter global dari Assessment/Tindak Lanjut,
+     *   default dashboard diarahkan ke RSCB.
+     */
+    if (selectedBludId || selectedBludCode || selectedBludName) return;
+
+    const defaultBlud =
+      bludFilters.find(
+        (item) => String(item.code || "").toUpperCase() === "RSCB",
+      ) || bludFilters[0];
+
+    if (defaultBlud) {
+      setSelectedBlud(defaultBlud);
+    }
+  }, [
+    bludFilters,
+    canSelectBlud,
+    isAdminBpkpDashboard,
+    selectedBludCode,
+    selectedBludId,
+    selectedBludName,
+    setSelectedBlud,
+  ]);
 
   const selectedBludScore = bludScores.find(
     (item) => item.bludId === selectedBludId,
@@ -1029,9 +1121,15 @@ export default function EnterpriseAssessmentDashboard() {
         options={bludFilters}
         onChange={(nextBludId) => {
           const nextBlud = bludFilters.find((item) => item.id === nextBludId);
-          setSelectedBlud(nextBlud || null);
+
+          if (nextBlud) {
+            setSelectedBlud(nextBlud);
+          } else if (!isAdminBpkpDashboard) {
+            clearSelectedBlud();
+          }
         }}
         compact={compact}
+        hideAllOption={isAdminBpkpDashboard}
       />
     );
   };
@@ -1283,6 +1381,8 @@ export default function EnterpriseAssessmentDashboard() {
 
     if (selectedBludId) {
       params.set("bludIds", selectedBludId);
+    } else if (selectedBludCode) {
+      params.set("bludCode", selectedBludCode);
     }
 
     window.open(`/api/reports/assessment?${params.toString()}`, "_blank");
@@ -1335,13 +1435,15 @@ export default function EnterpriseAssessmentDashboard() {
 
                       if (nextBlud) {
                         setSelectedBlud(nextBlud);
-                      } else {
+                      } else if (!isAdminBpkpDashboard) {
                         clearSelectedBlud();
                       }
                     }}
                     className="max-w-[210px] bg-transparent text-sm font-bold text-slate-800 outline-none dark:text-white"
                   >
-                    <option value="">Semua BLUD</option>
+                    {!isAdminBpkpDashboard ? (
+                      <option value="">Semua BLUD</option>
+                    ) : null}
                     {bludFilters.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.name}

@@ -155,7 +155,7 @@ const Sidebar = ({
   return (
     <aside
       className={`${
-        collapsed ? "w-[72px]" : "w-60"
+        collapsed ? "w-[72px]" : "w-[260px]"
       } relative z-10 flex min-h-screen flex-col overflow-hidden border-r border-blue-100/70 bg-white/90 shadow-[12px_0_35px_rgba(37,99,235,0.06)] backdrop-blur-xl transition-all duration-300 ease-in-out dark:border-slate-800 dark:bg-slate-950/90 dark:shadow-black/20`}
     >
       <div className="pointer-events-none absolute -right-16 top-10 h-40 w-40 rounded-full bg-blue-500/10 blur-3xl" />
@@ -175,8 +175,9 @@ const Sidebar = ({
 
           {!collapsed && (
             <div className="min-w-0">
-              <h1 className="truncate text-base font-black tracking-tight text-slate-950 dark:text-white">
-                TORANG BISA
+              <h1 className="truncate text-base font-black tracking-tight">
+                <span className="text-blue-700 dark:text-blue-400">TORANG</span>{" "}
+                <span className="text-red-600 dark:text-red-400">BISA</span>
               </h1>
               <div className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.14em] text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -187,7 +188,7 @@ const Sidebar = ({
         </div>
       </div>
 
-      <nav className="[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden relative flex-1 space-y-1.5 overflow-y-auto p-3">
+      <nav className="[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden relative flex-1 space-y-1.5 overflow-y-auto px-3 py-3 pr-4">
         {menuItems.map((item) => {
           const active = isParentActive(item);
           const expanded = expandedItems.has(item.id);
@@ -237,7 +238,7 @@ const Sidebar = ({
               </button>
 
               <div
-                className={`ml-5 mt-1.5 overflow-hidden border-l border-blue-100 pl-4 transition-all duration-300 dark:border-slate-800
+                className={`ml-5 mt-1.5 overflow-hidden border-l border-blue-100 pl-4 pr-1 transition-all duration-300 dark:border-slate-800
                 ${
                   !collapsed && item.subMenu && expanded
                     ? "max-h-96 translate-y-0 opacity-100"
@@ -259,7 +260,7 @@ const Sidebar = ({
 
                           onPageChange(subItem.id);
                         }}
-                        className={`group/sub flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-bold transition-all duration-200 hover:translate-x-1
+                        className={`group/sub flex w-full max-w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-bold transition-all duration-200 hover:translate-x-0.5
                         ${
                           subActive
                             ? "bg-blue-100 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:ring-blue-900/60"

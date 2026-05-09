@@ -43,7 +43,14 @@ type PermissionState = {
   canManage: boolean;
 };
 
+type FetchDocumentsResult = {
+  documents: GuideDocument[];
+  permissions: PermissionState;
+};
+
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
+
+let initialPanduanRequest: Promise<FetchDocumentsResult> | null = null;
 
 function formatFileSize(size: number) {
   if (!Number.isFinite(size) || size <= 0) return '0 B';
@@ -85,6 +92,21 @@ async function parseJsonSafe(response: Response) {
   }
 }
 
+async function requestPanduanDocuments() {
+  const response = await fetch('/api/panduan', { cache: 'no-store' });
+  const payload = await parseJsonSafe(response);
+
+  if (!response.ok) throw new Error(payload.message || 'Gagal memuat dokumen panduan.');
+
+  return {
+    documents: Array.isArray(payload.documents) ? payload.documents : [],
+    permissions: {
+      role: payload.permissions?.role || null,
+      canManage: Boolean(payload.permissions?.canManage),
+    },
+  };
+}
+
 function SoftGlow() {
   return (
     <>
@@ -114,22 +136,21 @@ export default function PanduanPage() {
 
   const canManage = permissions.canManage;
 
-  const fetchDocuments = useCallback(async () => {
+  const fetchDocuments = useCallback(async (options?: { reuseInitialRequest?: boolean }) => {
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch('/api/panduan', { cache: 'no-store' });
-      const payload = await parseJsonSafe(response);
+      const result = options?.reuseInitialRequest
+        ? (initialPanduanRequest ??= requestPanduanDocuments())
+        : await requestPanduanDocuments();
 
-      if (!response.ok) throw new Error(payload.message || 'Gagal memuat dokumen panduan.');
+      const payload = await result;
 
-      setDocuments(Array.isArray(payload.documents) ? payload.documents : []);
-      setPermissions({
-        role: payload.permissions?.role || null,
-        canManage: Boolean(payload.permissions?.canManage),
-      });
+      setDocuments(payload.documents);
+      setPermissions(payload.permissions);
     } catch (err) {
+      if (options?.reuseInitialRequest) initialPanduanRequest = null;
       setError(err instanceof Error ? err.message : 'Gagal memuat dokumen panduan.');
       setPermissions({ role: null, canManage: false });
     } finally {
@@ -138,7 +159,7 @@ export default function PanduanPage() {
   }, []);
 
   useEffect(() => {
-    void fetchDocuments();
+    void fetchDocuments({ reuseInitialRequest: true });
   }, [fetchDocuments]);
 
   const categoryStats = useMemo(() => {
@@ -227,6 +248,7 @@ export default function PanduanPage() {
       const payload = await parseJsonSafe(response);
       if (!response.ok) throw new Error(payload.message || 'Proses gagal.');
 
+      initialPanduanRequest = null;
       setMessage(payload.message || 'Data berhasil disimpan.');
       setActiveCategory(category);
       resetForm();
@@ -264,6 +286,7 @@ export default function PanduanPage() {
       const payload = await parseJsonSafe(response);
       if (!response.ok) throw new Error(payload.message || 'Gagal menghapus dokumen.');
 
+      initialPanduanRequest = null;
       setMessage(payload.message || 'Dokumen berhasil dihapus.');
       await fetchDocuments();
     } catch (err) {

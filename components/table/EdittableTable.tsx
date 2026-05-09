@@ -173,6 +173,30 @@ async function parseJsonSafe(response: Response) {
   }
 }
 
+let sessionRoleRequestPromise: Promise<string> | null = null;
+
+async function fetchSessionUserRoleOnce() {
+  if (!sessionRoleRequestPromise) {
+    sessionRoleRequestPromise = fetch("/api/auth/session", {
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Gagal membaca session role.");
+        }
+
+        const payload = await parseJsonSafe(response);
+        return String(payload?.user?.role || "").toUpperCase();
+      })
+      .catch((error) => {
+        sessionRoleRequestPromise = null;
+        throw error;
+      });
+  }
+
+  return sessionRoleRequestPromise;
+}
+
 function getLoadingMeta(action: LoadingAction) {
   switch (action) {
     case "uploading_document":
@@ -1440,11 +1464,15 @@ export default function EdittableTable({
   currentPage: string;
 }) {
   const globalYear = useBpkpGlobalFilterStore((state) => state.selectedYear);
-  const setGlobalYear = useBpkpGlobalFilterStore((state) => state.setSelectedYear);
+  const setGlobalYear = useBpkpGlobalFilterStore(
+    (state) => state.setSelectedYear,
+  );
   const globalBludCode = useBpkpGlobalFilterStore(
     (state) => state.selectedBludCode,
   );
-  const setGlobalBlud = useBpkpGlobalFilterStore((state) => state.setSelectedBlud);
+  const setGlobalBlud = useBpkpGlobalFilterStore(
+    (state) => state.setSelectedBlud,
+  );
 
   const [localSelectedYear, setLocalSelectedYear] = useState("2026");
   const [selectedDaMode, setSelectedDaMode] = useState<DaMode>("manual");
@@ -1477,34 +1505,66 @@ export default function EdittableTable({
     null,
   );
   const [loadingAction, setLoadingAction] = useState<LoadingAction>(null);
+  const [sessionUserRole, setSessionUserRole] = useState("");
+  const [isSessionRoleReady, setIsSessionRoleReady] = useState(false);
 
-  const globalFilterUserRole = String(periodInfo?.userRole || "").toUpperCase();
+  useEffect(() => {
+    let isMounted = true;
+
+    const resolveSessionRole = async () => {
+      try {
+        const nextRole = await fetchSessionUserRoleOnce();
+
+        if (isMounted) {
+          setSessionUserRole(nextRole);
+        }
+      } catch {
+        if (isMounted) {
+          setSessionUserRole("");
+        }
+      } finally {
+        if (isMounted) {
+          setIsSessionRoleReady(true);
+        }
+      }
+    };
+
+    void resolveSessionRole();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const resolvedUserRole = String(
+    periodInfo?.userRole || sessionUserRole || "",
+  ).toUpperCase();
 
   /**
    * BPKP/Admin BPKP memakai global filter BLUD.
    *
-   * Sebelumnya, pada render pertama `periodInfo` masih null sehingga role belum
-   * diketahui dan komponen sementara memakai local filter. Akibatnya request awal
-   * menjadi tanpa `bludCode`, lalu setelah payload mengisi role/BLUD terjadi render
-   * ulang dan request berikutnya memakai `bludCode`. Untuk BPKP/Admin BPKP, kondisi
-   * itu membuat fetch menjadi redundan.
-   *
-   * Dengan fallback `hasPreselectedBpkpBlud`, jika store global sudah punya BLUD
-   * terpilih, request pertama langsung memakai `bludCode`. Flow Operator BLUD dan
-   * Admin BLUD tidak diubah karena mereka tetap tidak menampilkan/mengandalkan
-   * filter global BPKP.
+   * Penting:
+   * - Role diambil dari session lebih dulu, sebelum GET /api/assessments.
+   * - BLUD_OPERATOR / BLUD_ADMIN tidak pernah memakai `globalBludCode` untuk
+   *   query assessment, sehingga tidak ada request awal dengan `bludCode` sisa
+   *   dari global filter BPKP.
+   * - BPKP / BPKP_ADMIN / BPKP_REVIEWER tetap memakai global filter BLUD, jadi
+   *   request assessment langsung membawa `bludCode` saat filter sudah terpilih.
    */
-  const hasPreselectedBpkpBlud = !periodInfo && !!globalBludCode;
-  const usesBpkpGlobalFilter =
-    isBpkpGlobalFilterRole(globalFilterUserRole) || hasPreselectedBpkpBlud;
+  const usesBpkpGlobalFilter = isBpkpGlobalFilterRole(resolvedUserRole);
 
   const selectedYear = usesBpkpGlobalFilter ? globalYear : localSelectedYear;
   const setSelectedYear = usesBpkpGlobalFilter
     ? setGlobalYear
     : setLocalSelectedYear;
   const selectedBludCode = usesBpkpGlobalFilter
-    ? globalBludCode
+    ? String(globalBludCode || "").toUpperCase()
     : localSelectedBludCode;
+
+  const effectiveFetchBludCode = usesBpkpGlobalFilter
+    ? selectedBludCode
+    : "";
+
   const setSelectedBludCode = (code: string) => {
     const normalizedCode = String(code || "").toUpperCase();
 
@@ -1562,13 +1622,17 @@ export default function EdittableTable({
     parameterOptions.map((item) => [item.id, item]),
   );
 
-  const currentUserRole = String(periodInfo?.userRole || "").toUpperCase();
+  const currentUserRole = resolvedUserRole;
   const isOperatorBlud = currentUserRole === "BLUD_OPERATOR";
   const isAdminBlud = currentUserRole === "BLUD_ADMIN";
   const isBpkp =
     currentUserRole === "BPKP" ||
     currentUserRole === "BPKP_ADMIN" ||
     currentUserRole === "BPKP_REVIEWER";
+
+  useEffect(() => {
+    currentUserRoleRef.current = currentUserRole;
+  }, [currentUserRole]);
 
   const isBpkpSelfAssessmentMode = isBpkp;
 
@@ -1810,8 +1874,13 @@ export default function EdittableTable({
         moduleKey: currentPage,
       });
 
-      if (selectedBludCode) {
-        params.set("bludCode", selectedBludCode);
+      const requestUserRole = String(
+        resolvedUserRole || currentUserRoleRef.current || "",
+      ).toUpperCase();
+      const shouldSendBludCodeForFetch = isBpkpGlobalFilterRole(requestUserRole);
+
+      if (effectiveFetchBludCode && shouldSendBludCodeForFetch) {
+        params.set("bludCode", effectiveFetchBludCode);
       }
 
       if (selectedDaMode) {
@@ -1842,33 +1911,23 @@ export default function EdittableTable({
         : "";
 
       /**
-       * Prevent duplicate GET on first load.
-       *
-       * Case BPKP/Admin BPKP:
-       * - First render may not know userRole yet, so selectedBludCode can be empty
-       *   and the first request becomes: /api/assessments?year=...&moduleKey=...&daMode=manual
-       * - The API still resolves a BLUD context and returns payload.blud.code.
-       * - After periodInfo/global BLUD state is populated, selectedBludCode can become
-       *   that same BLUD code and useEffect would otherwise fetch the same data again
-       *   with bludCode=...
-       *
-       * By normalizing activeFetchKeyRef to the concrete BLUD returned by the API,
-       * the next render with the same BLUD is treated as already fetched. If the user
-       * actually chooses a different BLUD, the key will differ and fetchRows() still runs.
-       * This does not change Operator BLUD/Admin BLUD workflow because the API response,
-       * permissions, rows, submit/review logic, and mutation payloads are untouched.
+       * Prevent duplicate GET after payload role is resolved.
+       * BLUD_OPERATOR / BLUD_ADMIN selalu dinormalisasi ke key AUTO agar render
+       * berikutnya tidak memicu GET ulang hanya karena role/payload sudah masuk.
+       * BPKP tetap memakai key BLUD agar perubahan pilihan BLUD tetap refetch.
        */
-      if (!selectedBludCode && payloadBludCode) {
-        activeFetchKeyRef.current = `${selectedYear}-${currentPage}-${selectedDaMode}-${payloadBludCode}`;
+      const payloadUserRole = String(payload?.userRole || "").toUpperCase();
+
+      if (payloadBludCode) {
+        activeFetchKeyRef.current = isBpkpGlobalFilterRole(payloadUserRole)
+          ? `${selectedYear}-${currentPage}-${selectedDaMode}-${
+              effectiveFetchBludCode || payloadBludCode
+            }`
+          : `${selectedYear}-${currentPage}-${selectedDaMode}-AUTO`;
       }
 
-      if (
-        !selectedBludCode &&
-        payloadBludCode &&
-        !isBpkpGlobalFilterRole(payload?.userRole)
-      ) {
-        setSelectedBludCode(payloadBludCode);
-      }
+      // Untuk BLUD_OPERATOR dan BLUD_ADMIN, jangan set localSelectedBludCode
+      // dari payload karena itu memicu fetch kedua dengan data yang sama.
 
       syncRejectedInfoModal(nextRows, payload?.userRole);
     } catch (err) {
@@ -1884,7 +1943,25 @@ export default function EdittableTable({
   };
 
   useEffect(() => {
-    const fetchKey = `${selectedYear}-${currentPage}-${selectedDaMode}-${selectedBludCode || "AUTO"}`;
+    if (!isSessionRoleReady) {
+      return;
+    }
+
+    const roleForFetchKey = String(
+      resolvedUserRole || currentUserRoleRef.current || "",
+    ).toUpperCase();
+    const shouldUseBludCodeInFetchKey =
+      isBpkpGlobalFilterRole(roleForFetchKey);
+
+    // Admin/BPKP wajib menunggu BLUD dari global filter siap dulu.
+    // Ini mencegah request pertama tanpa bludCode, lalu request kedua dengan bludCode.
+    if (shouldUseBludCodeInFetchKey && !effectiveFetchBludCode) {
+      return;
+    }
+
+    const fetchKey = `${selectedYear}-${currentPage}-${selectedDaMode}-${
+      shouldUseBludCodeInFetchKey ? effectiveFetchBludCode : "AUTO"
+    }`;
 
     if (activeFetchKeyRef.current === fetchKey) {
       return;
@@ -1893,7 +1970,14 @@ export default function EdittableTable({
     activeFetchKeyRef.current = fetchKey;
 
     void fetchRows();
-  }, [selectedYear, currentPage, selectedBludCode, selectedDaMode]);
+  }, [
+    selectedYear,
+    currentPage,
+    effectiveFetchBludCode,
+    selectedDaMode,
+    isSessionRoleReady,
+    resolvedUserRole,
+  ]);
 
   const defaultFormRow = (parameterId?: number): FormRow | null => {
     const fallback = parameterId
@@ -2415,6 +2499,7 @@ export default function EdittableTable({
   const temporaryDocumentsRef = useRef<DocumentItem[]>([]);
   const hasRolledBackRef = useRef(false);
   const activeFetchKeyRef = useRef<string>("");
+  const currentUserRoleRef = useRef<string>("");
 
   useEffect(() => {
     temporaryDocumentsRef.current = [
@@ -3075,7 +3160,7 @@ export default function EdittableTable({
                 >
                   {bludOptions.map((blud) => (
                     <option key={blud.id} value={blud.code}>
-                      {blud.name} ({blud.code})
+                      {blud.name}
                     </option>
                   ))}
                 </select>

@@ -542,6 +542,13 @@ export async function GET(request: Request) {
           createdByRole: "BLUD_OPERATOR",
         };
 
+    const assessmentFilledByLabel = useBpkpSelfAssessmentRows
+      ? "Admin BPKP"
+      : "Operator BLUD";
+    const assessmentReportSourceLabel = useBpkpSelfAssessmentRows
+      ? "Self Assessment Admin BPKP"
+      : "Self Assessment Operator BLUD";
+
     let bludId = session.user.bludId;
 
     if (canSelectBlud && selectedBludId) {
@@ -723,11 +730,16 @@ export async function GET(request: Request) {
       doc.text("LAPORAN SELF ASSESSMENT MANAJEMEN RISIKO BLUD", tableX, y + 7);
       setFont(false, 6.8);
       doc.text(
-        `BLUD: ${blud.code || "-"} - ${blud.name || "-"} | Tahun: ${year} | Status: ${mapStatusLabel(getGlobalStatus(periods))}`,
+        `BLUD: ${blud.code || "-"} - ${blud.name || "-"} | Tahun: ${year} | Status: ${mapStatusLabel(getGlobalStatus(periods))} | Diisi oleh: ${assessmentFilledByLabel}`,
         tableX,
         y + 18,
       );
-      y += 24;
+      doc.text(
+        `Sumber Report: ${assessmentReportSourceLabel}`,
+        tableX,
+        y + 28,
+      );
+      y += 34;
     };
 
     const drawTableHeader = () => {

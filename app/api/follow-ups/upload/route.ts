@@ -19,8 +19,24 @@ function isBpkpOwnedResponse(createdByRole?: string | null) {
   return BPKP_ROLES.includes(normalizeRole(createdByRole));
 }
 
+function canUseExistingDocumentAcrossModules(role?: string | null) {
+  const roleUpper = normalizeRole(role);
+
+  return (
+    roleUpper === "BLUD_OPERATOR" ||
+    roleUpper === "BLUD_ADMIN" ||
+    roleUpper === "BPKP" ||
+    roleUpper === "BPKP_ADMIN" ||
+    roleUpper === "BPKP_REVIEWER"
+  );
+}
+
 function canUseBludFilter(role?: string | null) {
   return isBpkpRole(role) || isAdminRole(role as any);
+}
+
+function isBludAdminReviewOnly(role?: string | null) {
+  return normalizeRole(role) === "BLUD_ADMIN";
 }
 
 async function resolveTargetBludId(
@@ -103,6 +119,18 @@ export async function POST(request: Request) {
     }
 
     const role = normalizeRole(session.user.role);
+    const allowExistingDocumentAcrossModules =
+      canUseExistingDocumentAcrossModules(role);
+
+    if (isBludAdminReviewOnly(role)) {
+      return NextResponse.json(
+        {
+          message: "Role Admin BLUD hanya dapat melakukan review tindak lanjut AOI.",
+        },
+        { status: 403 },
+      );
+    }
+
     const responseOwnedByBpkp = isBpkpOwnedResponse(response.createdByRole);
 
     if (isBpkpRole(role)) {
@@ -176,44 +204,33 @@ export async function POST(request: Request) {
         files.length > 1 ? `${customName} ${index + 1}` : customName;
 
       /**
-       * Aturan duplikat untuk Admin BPKP dibuat berdasarkan filter BLUD + tahun.
-       * Scope ini sengaja tidak mengubah flow BLUD Operator/Admin BLUD:
-       * - BPKP: cek seluruh dokumen pada BLUD+tahun yang terhubung ke response
-       *   BPKP atau sourceParameter BPKP TL Evidence.
-       * - BLUD: tetap memakai scope period existing agar behavior lama aman.
+       * Aturan duplikat existing evidence untuk menu Tindak Lanjut.
+       *
+       * Sebelumnya role BLUD hanya cek dokumen pada assessmentPeriodId yang
+       * sama. Akibatnya existing evidence dari modul/aspek lain tidak muncul
+       * sebagai dokumen existing, walaupun masih dalam BLUD dan tahun yang sama.
+       *
+       * Aturan baru:
+       * - BLUD_OPERATOR dan BLUD_ADMIN mengecek existing evidence lintas
+       *   modul/aspek selama masih dalam BLUD yang sama dan tahun yang sama.
+       * - BPKP / BPKP_ADMIN / BPKP_REVIEWER tetap memakai aturan lintas modul
+       *   yang sudah berjalan.
+       * - Role lain tetap memakai scope period existing.
        */
-      const existingDocument = responseOwnedByBpkp
-        ? (
-            await prisma.$queryRaw<ExistingDocumentResult[]>`
-              SELECT DISTINCT
-                d."id",
-                d."name",
-                d."originalName",
-                d."mimeType",
-                d."sourceParameter",
-                d."fileExtension"
-              FROM "AssessmentDocument" d
-              INNER JOIN "AssessmentPeriod" ap ON ap."id" = d."assessmentPeriodId"
-              LEFT JOIN "AssessmentResponseDocument" ard ON ard."documentId" = d."id"
-              LEFT JOIN "AssessmentResponse" ar ON ar."id" = ard."responseId"
-              LEFT JOIN "FollowUpEntryDocument" fud ON fud."documentId" = d."id"
-              LEFT JOIN "FollowUpEntry" fu ON fu."id" = fud."followUpEntryId"
-              LEFT JOIN "AssessmentResponse" fur ON fur."id" = fu."assessmentResponseId"
-              WHERE ap."bludId" = ${response.assessmentPeriod.bludId}
-                AND ap."year" = ${response.assessmentPeriod.year}
-                AND (
-                  d."name" = ${customName}
-                  OR d."name" = ${displayName}
-                  OR d."originalName" = ${file.name}
-                )
-                AND (
-                  ar."createdByRole" IN ('BPKP', 'BPKP_ADMIN', 'BPKP_REVIEWER')
-                  OR fur."createdByRole" IN ('BPKP', 'BPKP_ADMIN', 'BPKP_REVIEWER')
-                  OR d."sourceParameter" ILIKE 'BPKP TL Evidence%'
-                )
-              LIMIT 1
-            `
-          )[0] || null
+      const existingDocument = allowExistingDocumentAcrossModules
+        ? await prisma.assessmentDocument.findFirst({
+            where: {
+              assessmentPeriod: {
+                bludId: response.assessmentPeriod.bludId,
+                year: response.assessmentPeriod.year,
+              },
+              OR: [
+                { name: customName },
+                { name: displayName },
+                { originalName: file.name },
+              ],
+            },
+          })
         : await prisma.assessmentDocument.findFirst({
             where: {
               assessmentPeriodId: response.assessmentPeriodId,

@@ -41,6 +41,16 @@ async function getBludOptions() {
 async function resolveBludContext(session: any, request: Request) {
   const role = String(session?.user?.role || "").toUpperCase();
 
+  if (role === "BLUD_OPERATOR" || role === "BLUD_ADMIN") {
+    if (session?.user?.bludId) {
+      return prisma.blud.findUnique({
+        where: { id: session.user.bludId },
+      });
+    }
+
+    return null;
+  }
+
   if (canUseBludFilter(session?.user?.role)) {
     const { searchParams } = new URL(request.url);
     const bludCode = searchParams.get("bludCode") || searchParams.get("blud");
@@ -191,6 +201,18 @@ function bpkpInputWhere() {
   return {
     createdByRole: { in: BPKP_ROLES },
   };
+}
+
+function canUseExistingDocumentAcrossModules(role?: string | null) {
+  const roleUpper = String(role || "").toUpperCase();
+
+  return (
+    roleUpper === "BLUD_OPERATOR" ||
+    roleUpper === "BLUD_ADMIN" ||
+    roleUpper === "BPKP" ||
+    roleUpper === "BPKP_ADMIN" ||
+    roleUpper === "BPKP_REVIEWER"
+  );
 }
 
 export async function GET(request: Request) {
@@ -504,6 +526,8 @@ export async function POST(request: Request) {
     const role = session.user.role;
     const roleUpper = String(role || "").toUpperCase();
     const isBpkpSelfInput = isBpkpRole(role);
+    const allowExistingDocumentAcrossModules =
+      canUseExistingDocumentAcrossModules(role);
     const targetBludCode = body.bludCode
       ? String(body.bludCode).toUpperCase()
       : null;
@@ -611,22 +635,27 @@ export async function POST(request: Request) {
 
     if (documentIds.length > 0) {
       /**
-       * Fix existing document global untuk Admin BPKP:
+       * Fix existing document lintas modul/aspek.
        *
        * Sebelumnya dokumen hanya dianggap valid bila assessmentPeriodId sama
-       * dengan periode module yang sedang dibuka. Setelah cek existing dokumen
-       * dibuat global per BLUD + tahun, dokumen existing dari module lain akan
-       * memiliki assessmentPeriodId berbeda sehingga POST /api/assessments
-       * mengembalikan 400 saat tombol Simpan diklik.
+       * dengan periode module yang sedang dibuka. Akibatnya saat user memilih
+       * "Gunakan Dokumen Existing" dari module/aspek lain, POST /api/assessments
+       * mengembalikan 400 walaupun dokumen masih milik BLUD dan tahun yang sama.
        *
-       * Perubahan ini hanya berlaku untuk input self-assessment BPKP.
-       * Operator BLUD dan Admin BLUD tetap memakai validasi lama berbasis
-       * assessmentPeriodId current module agar workflow existing tidak berubah.
+       * Aturan baru sesuai permintaan:
+       * - BLUD_OPERATOR dan BLUD_ADMIN boleh memakai existing document lintas
+       *   module/aspek selama masih dalam BLUD yang sama dan tahun yang sama.
+       * - BPKP / BPKP_ADMIN / BPKP_REVIEWER boleh memakai existing document
+       *   lintas module/aspek selama masih dalam BLUD yang dipilih dan tahun
+       *   yang sama.
+       *
+       * Role lain tetap memakai validasi lama berbasis assessmentPeriodId
+       * current module agar fungsi lain yang sudah berjalan tidak terganggu.
        */
       validDocuments = await prisma.assessmentDocument.findMany({
         where: {
           id: { in: documentIds },
-          ...(isBpkpSelfInput
+          ...(allowExistingDocumentAcrossModules
             ? {
                 assessmentPeriod: {
                   bludId,
@@ -643,10 +672,9 @@ export async function POST(request: Request) {
       if (validDocuments.length !== documentIds.length) {
         return NextResponse.json(
           {
-            message:
-              isBpkpSelfInput
-                ? "Sebagian dokumen tidak valid untuk BLUD dan tahun yang dipilih."
-                : "Sebagian dokumen tidak valid untuk periode assessment ini.",
+            message: allowExistingDocumentAcrossModules
+              ? "Sebagian dokumen tidak valid untuk BLUD dan tahun yang dipilih."
+              : "Sebagian dokumen tidak valid untuk periode assessment ini.",
           },
           { status: 400 },
         );
@@ -700,6 +728,7 @@ export async function POST(request: Request) {
         documentIds,
         daMode,
         isBpkpSelfInput,
+        allowExistingDocumentAcrossModules,
       },
     });
 

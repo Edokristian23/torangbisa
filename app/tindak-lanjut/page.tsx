@@ -21,6 +21,7 @@ import {
   Clock3,
   ShieldCheck,
   ChevronRight,
+  Download,
 } from "lucide-react";
 
 type DocumentItem = {
@@ -34,6 +35,8 @@ type DocumentItem = {
   isPersisted?: boolean;
   cleanupOnCancel?: boolean;
 };
+
+type FollowUpStatus = "DONE" | "NOT_DONE";
 
 type FollowUpEntry = {
   id?: string;
@@ -53,6 +56,8 @@ type FollowUpCard = {
   aoi: string;
   moduleKey: string;
   moduleLabel: string;
+  followUpStatus?: FollowUpStatus | null;
+  pendingReason?: string;
   isCompleted: boolean;
   followUpCount: number;
   followUps: FollowUpEntry[];
@@ -189,6 +194,8 @@ function Modal({
   fallbackBludCode?: string;
 }) {
   const [entries, setEntries] = useState<FollowUpEntry[]>([]);
+  const [followUpStatus, setFollowUpStatus] = useState<FollowUpStatus>("DONE");
+  const [pendingReason, setPendingReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [closing, setClosing] = useState(false);
   const [uploadingIndex, setUploadingIndex] = useState<number | null>(null);
@@ -212,8 +219,13 @@ function Modal({
     if (!card || !open) return;
     hasRolledBackRef.current = false;
 
+    const normalizedStatus: FollowUpStatus =
+      card.followUpStatus === "NOT_DONE" ? "NOT_DONE" : "DONE";
+
+    setFollowUpStatus(normalizedStatus);
+    setPendingReason(card.pendingReason || "");
     setEntries(
-      card.followUps.length > 0
+      normalizedStatus === "DONE" && card.followUps.length > 0
         ? card.followUps.map((item, index) => ({
             ...item,
             sortOrder: index + 1,
@@ -280,8 +292,19 @@ function Modal({
 
   if (!open || !card) return null;
 
-  const updateEntry = (index: number, patch: Partial<FollowUpEntry>) => {
+  const updateFollowUpStatus = (nextStatus: FollowUpStatus) => {
     if (isReadOnly) return;
+
+    setFollowUpStatus(nextStatus);
+    setError(null);
+
+    if (nextStatus === "NOT_DONE") {
+      setEntries([emptyEntry(1)]);
+    }
+  };
+
+  const updateEntry = (index: number, patch: Partial<FollowUpEntry>) => {
+    if (isReadOnly || followUpStatus === "NOT_DONE") return;
 
     setEntries((prev) =>
       prev.map((item, idx) => (idx === index ? { ...item, ...patch } : item)),
@@ -289,13 +312,13 @@ function Modal({
   };
 
   const addEntry = () => {
-    if (isReadOnly) return;
+    if (isReadOnly || followUpStatus === "NOT_DONE") return;
 
     setEntries((prev) => [...prev, emptyEntry(prev.length + 1)]);
   };
 
   const removeEntry = (index: number) => {
-    if (isReadOnly) return;
+    if (isReadOnly || followUpStatus === "NOT_DONE") return;
 
     setEntries((prev) =>
       prev
@@ -344,6 +367,10 @@ function Modal({
   };
 
   const isFormValid = () => {
+    if (followUpStatus === "NOT_DONE") {
+      return pendingReason.trim().length > 0;
+    }
+
     const filledEntries = entries.filter((entry) => {
       const v = getEntryValidation(entry);
       return v.isFilled;
@@ -375,7 +402,7 @@ function Modal({
     document: DocumentItem,
     entryIndex: number,
   ) => {
-    if (isReadOnly) return;
+    if (isReadOnly || followUpStatus === "NOT_DONE") return;
 
     setEntries((prev) =>
       prev.map((item, idx) => {
@@ -411,7 +438,7 @@ function Modal({
   };
 
   const uploadEvidence = async (index: number, files: FileList | null) => {
-    if (isReadOnly) return;
+    if (isReadOnly || followUpStatus === "NOT_DONE") return;
     if (!files || files.length === 0 || !card) return;
 
     const evidenceName = entries[index]?.evidenceName?.trim();
@@ -535,7 +562,7 @@ function Modal({
     docIndex: number,
     doc: DocumentItem,
   ) => {
-    if (isReadOnly) return;
+    if (isReadOnly || followUpStatus === "NOT_DONE") return;
 
     setDeletingDocumentId(doc.id);
     setError(null);
@@ -574,6 +601,52 @@ function Modal({
 
   const save = async () => {
     if (isReadOnly) return;
+
+    if (followUpStatus === "NOT_DONE") {
+      const reason = pendingReason.trim();
+
+      if (!reason) {
+        setError("Uraian alasan belum ditindaklanjuti wajib diisi.");
+        return;
+      }
+
+      setSaving(true);
+      setError(null);
+
+      try {
+        const res = await fetch("/api/follow-ups", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            responseId: card.id,
+            followUpStatus: "NOT_DONE",
+            pendingReason: reason,
+            entries: [],
+          }),
+        });
+
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(json?.message || "Gagal menyimpan alasan belum TL.");
+        }
+
+        await rollbackTemporaryDocuments(
+          entries.flatMap((entry) => entry.documents),
+        );
+        await onSaved();
+        hasRolledBackRef.current = true;
+        onClose();
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Gagal menyimpan alasan belum TL.",
+        );
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
 
     const filledEntries = entries.filter((entry) => {
       const validation = getEntryValidation(entry);
@@ -702,6 +775,38 @@ function Modal({
             </div>
           ) : null}
 
+          {!isReadOnly ? (
+            <div className="mb-5 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+              <label className="block text-xs font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                Status Tindak Lanjut
+              </label>
+              <select
+                value={followUpStatus}
+                onChange={(e) =>
+                  updateFollowUpStatus(e.target.value as FollowUpStatus)
+                }
+                className="mt-3 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              >
+                <option value="DONE">Sudah di TL</option>
+                <option value="NOT_DONE">Belum di TL</option>
+              </select>
+              <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                Pilih “Sudah di TL” untuk mengisi uraian tindak lanjut dan
+                evidence. Pilih “Belum di TL” untuk mencatat alasan belum
+                ditindaklanjuti.
+              </p>
+            </div>
+          ) : card.followUpStatus === "NOT_DONE" ? (
+            <div className="mb-5 rounded-[28px] border border-amber-200 bg-amber-50 p-5 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/30">
+              <p className="text-xs font-black uppercase tracking-[0.16em] text-amber-700 dark:text-amber-300">
+                Status Tindak Lanjut
+              </p>
+              <p className="mt-2 text-sm font-bold text-amber-800 dark:text-amber-200">
+                Belum di TL
+              </p>
+            </div>
+          ) : null}
+
           <div className="mb-6 grid gap-4 lg:grid-cols-3">
             <div className="group relative overflow-hidden rounded-[28px] border border-slate-200 bg-gradient-to-br from-white via-blue-50/40 to-white p-5 shadow-sm ring-1 ring-blue-500/5 transition duration-300 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg dark:border-slate-700 dark:from-slate-900 dark:via-blue-950/20 dark:to-slate-900 dark:hover:border-blue-800">
               <div className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-blue-500/10 blur-2xl" />
@@ -761,93 +866,113 @@ function Modal({
             </div>
           </div>
 
-          <div className="space-y-4">
-            {entries.map((entry, index) => {
-              const validation = getEntryValidation(entry);
-              const showEvidenceWarning =
-                validation.hasDescription && !validation.hasDocuments;
-              const showEvidenceNameWarning =
-                entry.documents.length === 0 &&
-                entry.description.trim().length > 0 &&
-                entry.evidenceName.trim().length === 0;
+          {followUpStatus === "NOT_DONE" ? (
+            <div className="rounded-[32px] border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-white p-6 shadow-sm ring-1 ring-amber-500/10 dark:border-amber-900/60 dark:from-amber-950/25 dark:via-slate-900 dark:to-slate-900">
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-600" />
+                Alasan Belum di TL
+              </div>
+              <textarea
+                value={pendingReason}
+                disabled={isReadOnly}
+                onChange={(e) => setPendingReason(e.target.value)}
+                rows={5}
+                className={`min-h-[180px] w-full resize-none rounded-[26px] border border-amber-300 bg-white px-5 py-4 text-sm leading-6 text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-amber-400 focus:ring-4 focus:ring-amber-500/10 dark:bg-slate-950 dark:text-white dark:placeholder:text-slate-500 ${isReadOnly ? "cursor-not-allowed bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" : ""}`}
+                placeholder="Jelaskan alasan AOI belum dapat ditindaklanjuti secara jelas, terukur, dan profesional."
+              />
+              <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                Pada status Belum di TL, field evidence dan tombol Tambah Uraian
+                TL disembunyikan sesuai aturan proses.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {entries.map((entry, index) => {
+                const validation = getEntryValidation(entry);
+                const showEvidenceWarning =
+                  validation.hasDescription && !validation.hasDocuments;
+                const showEvidenceNameWarning =
+                  entry.documents.length === 0 &&
+                  entry.description.trim().length > 0 &&
+                  entry.evidenceName.trim().length === 0;
 
-              return (
-                <div
-                  key={`${entry.id || "new"}-${index}`}
-                  className={`relative overflow-hidden rounded-[32px] border p-6 shadow-sm ring-1 transition duration-300 dark:bg-slate-900 ${
-                    showEvidenceWarning
-                      ? "border-amber-300 bg-gradient-to-br from-amber-50 via-white to-white ring-amber-500/10 dark:border-amber-900/60 dark:from-amber-950/25 dark:via-slate-900 dark:to-slate-900"
-                      : "border-slate-200 bg-gradient-to-br from-white via-blue-50/20 to-white ring-blue-500/5 dark:border-slate-700 dark:from-slate-900 dark:via-blue-950/10 dark:to-slate-900"
-                  }`}
-                >
-                  <div className="relative mb-5 flex items-start justify-between gap-4">
-                    <div className="flex min-w-0 items-start gap-4">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-sm font-black text-white shadow-lg shadow-blue-500/20">
-                        {index + 1}
+                return (
+                  <div
+                    key={`${entry.id || "new"}-${index}`}
+                    className={`relative overflow-hidden rounded-[32px] border p-6 shadow-sm ring-1 transition duration-300 dark:bg-slate-900 ${
+                      showEvidenceWarning
+                        ? "border-amber-300 bg-gradient-to-br from-amber-50 via-white to-white ring-amber-500/10 dark:border-amber-900/60 dark:from-amber-950/25 dark:via-slate-900 dark:to-slate-900"
+                        : "border-slate-200 bg-gradient-to-br from-white via-blue-50/20 to-white ring-blue-500/5 dark:border-slate-700 dark:from-slate-900 dark:via-blue-950/10 dark:to-slate-900"
+                    }`}
+                  >
+                    <div className="relative mb-5 flex items-start justify-between gap-4">
+                      <div className="flex min-w-0 items-start gap-4">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-sm font-black text-white shadow-lg shadow-blue-500/20">
+                          {index + 1}
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
+                            Uraian Tindak Lanjut
+                          </div>
+                          <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                            Tambahkan uraian dan evidence pendukung sesuai
+                            progres perbaikan.
+                          </p>
+                        </div>
                       </div>
 
-                      <div className="min-w-0">
-                        <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300">
-                          <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
-                          Uraian Tindak Lanjut
-                        </div>
-                        <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
-                          Tambahkan uraian dan evidence pendukung sesuai progres
-                          perbaikan.
+                      {entries.length > 1 ? (
+                        <button
+                          onClick={() => removeEntry(index)}
+                          disabled={isReadOnly}
+                          className={`shrink-0 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-600 shadow-sm transition hover:bg-red-100 hover:shadow-md dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300 ${isReadOnly ? "cursor-not-allowed opacity-60" : ""}`}
+                        >
+                          Hapus
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <textarea
+                      value={entry.description}
+                      disabled={isReadOnly}
+                      onChange={(e) =>
+                        updateEntry(index, { description: e.target.value })
+                      }
+                      rows={4}
+                      className={`min-h-[150px] w-full resize-none rounded-[26px] border px-5 py-4 text-sm leading-6 text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:ring-4 dark:text-white dark:placeholder:text-slate-500 ${
+                        showEvidenceWarning
+                          ? "border-amber-300 bg-white focus:border-amber-400 focus:ring-amber-500/10 dark:bg-slate-950"
+                          : "border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-950"
+                      } ${isReadOnly ? "cursor-not-allowed bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" : ""}`}
+                      placeholder="Jelaskan tindak lanjut yang sudah dilakukan secara profesional dan terukur."
+                    />
+
+                    {showEvidenceWarning ? (
+                      <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/30">
+                        <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                          Uraian tindak lanjut sudah diisi, namun evidence
+                          pendukung masih belum ditambahkan. Minimal 1 evidence
+                          wajib diunggah untuk melengkapi entri ini.
                         </p>
                       </div>
-                    </div>
-
-                    {entries.length > 1 ? (
-                      <button
-                        onClick={() => removeEntry(index)}
-                        disabled={isReadOnly}
-                        className={`shrink-0 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-600 shadow-sm transition hover:bg-red-100 hover:shadow-md dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300 ${isReadOnly ? "cursor-not-allowed opacity-60" : ""}`}
-                      >
-                        Hapus
-                      </button>
                     ) : null}
-                  </div>
 
-                  <textarea
-                    value={entry.description}
-                    disabled={isReadOnly}
-                    onChange={(e) =>
-                      updateEntry(index, { description: e.target.value })
-                    }
-                    rows={4}
-                    className={`min-h-[150px] w-full resize-none rounded-[26px] border px-5 py-4 text-sm leading-6 text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 focus:ring-4 dark:text-white dark:placeholder:text-slate-500 ${
-                      showEvidenceWarning
-                        ? "border-amber-300 bg-white focus:border-amber-400 focus:ring-amber-500/10 dark:bg-slate-950"
-                        : "border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-950"
-                    } ${isReadOnly ? "cursor-not-allowed bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" : ""}`}
-                    placeholder="Jelaskan tindak lanjut yang sudah dilakukan secara profesional dan terukur."
-                  />
+                    {showEvidenceNameWarning ? (
+                      <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm dark:border-blue-900/60 dark:bg-blue-950/30">
+                        <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                          Silakan isi Nama Evidence terlebih dahulu agar upload
+                          dokumen pendukung dapat dilakukan.
+                        </p>
+                      </div>
+                    ) : null}
 
-                  {showEvidenceWarning ? (
-                    <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/30">
-                      <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                        Uraian tindak lanjut sudah diisi, namun evidence
-                        pendukung masih belum ditambahkan. Minimal 1 evidence
-                        wajib diunggah untuk melengkapi entri ini.
-                      </p>
-                    </div>
-                  ) : null}
-
-                  {showEvidenceNameWarning ? (
-                    <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm dark:border-blue-900/60 dark:bg-blue-950/30">
-                      <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
-                        Silakan isi Nama Evidence terlebih dahulu agar upload
-                        dokumen pendukung dapat dilakukan.
-                      </p>
-                    </div>
-                  ) : null}
-
-                  <div className="mt-5 overflow-hidden rounded-[30px] border border-slate-200 bg-white/90 shadow-sm dark:border-slate-700 dark:bg-slate-950/70">
-                    <div className="flex flex-col gap-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 via-blue-50/50 to-slate-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800 dark:from-slate-900 dark:via-blue-950/20 dark:to-slate-900">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="
+                    <div className="mt-5 overflow-hidden rounded-[30px] border border-slate-200 bg-white/90 shadow-sm dark:border-slate-700 dark:bg-slate-950/70">
+                      <div className="flex flex-col gap-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 via-blue-50/50 to-slate-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800 dark:from-slate-900 dark:via-blue-950/20 dark:to-slate-900">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="
   flex h-11 w-11 items-center justify-center rounded-2xl text-white shadow-lg
 
   bg-gradient-to-br from-blue-600 to-cyan-500
@@ -856,199 +981,200 @@ function Modal({
   dark:from-slate-950 dark:to-blue-900
   dark:shadow-blue-950/30
 "
-                        >
-                          <Upload size={18} />
+                          >
+                            <Upload size={18} />
+                          </div>
+                          <div>
+                            <h4 className="font-black text-slate-950 dark:text-white">
+                              Evidence Pendukung
+                            </h4>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                              Lengkapi dokumen pendukung untuk validasi tindak
+                              lanjut.
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <h4 className="font-black text-slate-950 dark:text-white">
-                            Evidence Pendukung
-                          </h4>
-                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                            Lengkapi dokumen pendukung untuk validasi tindak
-                            lanjut.
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            Maks 1MB
+                          </span>
+
+                          <div className="rounded-full bg-blue-100 px-3 py-1.5 text-xs font-black text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                            {entry.documents.length}/{MAX_FILES_PER_ENTRY}
+                          </div>
+
+                          <span className="rounded-full bg-amber-100 px-3 py-1.5 text-[11px] font-black text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                            Wajib
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="p-5">
+                        <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/30">
+                          <p className="text-xs font-black text-amber-800 dark:text-amber-300">
+                            Upload Evidence wajib
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                            Setiap uraian tindak lanjut yang diisi wajib
+                            memiliki minimal 1 evidence pendukung.
                           </p>
                         </div>
-                      </div>
 
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                          Maks 1MB
-                        </span>
+                        <div className="mb-3 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-start">
+                          <div className="space-y-1">
+                            <label className="block text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                              Nama Evidence
+                            </label>
 
-                        <div className="rounded-full bg-blue-100 px-3 py-1.5 text-xs font-black text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
-                          {entry.documents.length}/{MAX_FILES_PER_ENTRY}
-                        </div>
-
-                        <span className="rounded-full bg-amber-100 px-3 py-1.5 text-[11px] font-black text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                          Wajib
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="p-5">
-                      <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/30">
-                        <p className="text-xs font-black text-amber-800 dark:text-amber-300">
-                          Upload Evidence wajib
-                        </p>
-                        <p className="mt-1 text-xs leading-5 text-amber-700 dark:text-amber-300">
-                          Setiap uraian tindak lanjut yang diisi wajib memiliki
-                          minimal 1 evidence pendukung.
-                        </p>
-                      </div>
-
-                      <div className="mb-3 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-start">
-                        <div className="space-y-1">
-                          <label className="block text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                            Nama Evidence
-                          </label>
-
-                          <input
-                            value={entry.evidenceName}
-                            disabled={
-                              isReadOnly ||
-                              entry.documents.length >= MAX_FILES_PER_ENTRY
-                            }
-                            onChange={(e) =>
-                              updateEntry(index, {
-                                evidenceName: e.target.value,
-                              })
-                            }
-                            placeholder={
-                              entry.documents.length >= MAX_FILES_PER_ENTRY
-                                ? "Maksimal 5 evidence tercapai"
-                                : "Masukkan nama evidence"
-                            }
-                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:disabled:bg-slate-800"
-                          />
-                        </div>
-
-                        <div className="flex flex-col pt-[22px]">
-                          <label
-                            title={
-                              entry.documents.length >= MAX_FILES_PER_ENTRY
-                                ? "Maksimal 5 evidence sudah tercapai"
-                                : !entry.evidenceName.trim()
-                                  ? "Isi nama evidence terlebih dahulu"
-                                  : ""
-                            }
-                            className={`inline-flex items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-3 text-sm font-semibold transition ${
-                              isReadOnly ||
-                              saving ||
-                              uploadingIndex === index ||
-                              !entry.evidenceName.trim() ||
-                              entry.documents.length >= MAX_FILES_PER_ENTRY
-                                ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
-                                : "cursor-pointer border-blue-300 bg-blue-50 text-blue-700 shadow-sm hover:bg-blue-100 hover:shadow-md dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
-                            }`}
-                          >
-                            {uploadingIndex === index ? (
-                              <Loader2 size={16} className="animate-spin" />
-                            ) : (
-                              <Upload size={16} />
-                            )}
-                            Upload
                             <input
-                              type="file"
-                              multiple
-                              className="hidden"
+                              value={entry.evidenceName}
                               disabled={
                                 isReadOnly ||
-                                saving || // ⬅️ tambahkan ini
-                                uploadingIndex === index ||
-                                !entry.evidenceName.trim() ||
                                 entry.documents.length >= MAX_FILES_PER_ENTRY
                               }
                               onChange={(e) =>
-                                void uploadEvidence(index, e.target.files)
+                                updateEntry(index, {
+                                  evidenceName: e.target.value,
+                                })
                               }
+                              placeholder={
+                                entry.documents.length >= MAX_FILES_PER_ENTRY
+                                  ? "Maksimal 5 evidence tercapai"
+                                  : "Masukkan nama evidence"
+                              }
+                              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:disabled:bg-slate-800"
                             />
-                          </label>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 space-y-2">
-                        {entry.documents.length === 0 ? (
-                          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">
-                            Belum ada evidence yang terhubung ke uraian tindak
-                            lanjut ini.
                           </div>
-                        ) : (
-                          entry.documents.map((doc, docIndex) => (
-                            <div
-                              key={`${doc.id}-${docIndex}`}
-                              className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm transition hover:border-blue-200 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:hover:border-blue-800"
+
+                          <div className="flex flex-col pt-[22px]">
+                            <label
+                              title={
+                                entry.documents.length >= MAX_FILES_PER_ENTRY
+                                  ? "Maksimal 5 evidence sudah tercapai"
+                                  : !entry.evidenceName.trim()
+                                    ? "Isi nama evidence terlebih dahulu"
+                                    : ""
+                              }
+                              className={`inline-flex items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-3 text-sm font-semibold transition ${
+                                isReadOnly ||
+                                saving ||
+                                uploadingIndex === index ||
+                                !entry.evidenceName.trim() ||
+                                entry.documents.length >= MAX_FILES_PER_ENTRY
+                                  ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
+                                  : "cursor-pointer border-blue-300 bg-blue-50 text-blue-700 shadow-sm hover:bg-blue-100 hover:shadow-md dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
+                              }`}
                             >
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2 font-medium text-slate-800 dark:text-white">
-                                  <FileText
-                                    size={15}
-                                    className="text-indigo-500"
-                                  />
-                                  <span className="truncate">{doc.name}</span>
-                                </div>
-                                <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                                  {doc.originalName}
-                                </p>
-                              </div>
+                              {uploadingIndex === index ? (
+                                <Loader2 size={16} className="animate-spin" />
+                              ) : (
+                                <Upload size={16} />
+                              )}
+                              Upload
+                              <input
+                                type="file"
+                                multiple
+                                className="hidden"
+                                disabled={
+                                  isReadOnly ||
+                                  saving || // ⬅️ tambahkan ini
+                                  uploadingIndex === index ||
+                                  !entry.evidenceName.trim() ||
+                                  entry.documents.length >= MAX_FILES_PER_ENTRY
+                                }
+                                onChange={(e) =>
+                                  void uploadEvidence(index, e.target.files)
+                                }
+                              />
+                            </label>
+                          </div>
+                        </div>
 
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    window.open(
-                                      doc.url,
-                                      "_blank",
-                                      "noopener,noreferrer",
-                                    )
-                                  }
-                                  className="cursor-pointer rounded-xl border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-                                >
-                                  <Eye size={14} />
-                                </button>
-
-                                <button
-                                  type="button"
-                                  disabled={
-                                    isReadOnly ||
-                                    deletingDocumentId === doc.id ||
-                                    saving
-                                  }
-                                  onClick={() =>
-                                    void removeEvidenceDocument(
-                                      index,
-                                      docIndex,
-                                      doc,
-                                    )
-                                  }
-                                  className={`rounded-xl border border-red-200 p-2 text-red-600 transition ${
-                                    isReadOnly ||
-                                    deletingDocumentId === doc.id ||
-                                    saving
-                                      ? "cursor-not-allowed bg-red-50/60 opacity-60"
-                                      : "bg-red-50 hover:bg-red-100"
-                                  }`}
-                                  title="Hapus evidence"
-                                >
-                                  {deletingDocumentId === doc.id ? (
-                                    <Loader2
-                                      size={14}
-                                      className="animate-spin"
-                                    />
-                                  ) : (
-                                    <X size={14} />
-                                  )}
-                                </button>
-                              </div>
+                        <div className="mt-4 space-y-2">
+                          {entry.documents.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">
+                              Belum ada evidence yang terhubung ke uraian tindak
+                              lanjut ini.
                             </div>
-                          ))
-                        )}
+                          ) : (
+                            entry.documents.map((doc, docIndex) => (
+                              <div
+                                key={`${doc.id}-${docIndex}`}
+                                className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm transition hover:border-blue-200 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:hover:border-blue-800"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 font-medium text-slate-800 dark:text-white">
+                                    <FileText
+                                      size={15}
+                                      className="text-indigo-500"
+                                    />
+                                    <span className="truncate">{doc.name}</span>
+                                  </div>
+                                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                                    {doc.originalName}
+                                  </p>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      window.open(
+                                        doc.url,
+                                        "_blank",
+                                        "noopener,noreferrer",
+                                      )
+                                    }
+                                    className="cursor-pointer rounded-xl border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                  >
+                                    <Eye size={14} />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      isReadOnly ||
+                                      deletingDocumentId === doc.id ||
+                                      saving
+                                    }
+                                    onClick={() =>
+                                      void removeEvidenceDocument(
+                                        index,
+                                        docIndex,
+                                        doc,
+                                      )
+                                    }
+                                    className={`rounded-xl border border-red-200 p-2 text-red-600 transition ${
+                                      isReadOnly ||
+                                      deletingDocumentId === doc.id ||
+                                      saving
+                                        ? "cursor-not-allowed bg-red-50/60 opacity-60"
+                                        : "bg-red-50 hover:bg-red-100"
+                                    }`}
+                                    title="Hapus evidence"
+                                  >
+                                    {deletingDocumentId === doc.id ? (
+                                      <Loader2
+                                        size={14}
+                                        className="animate-spin"
+                                      />
+                                    ) : (
+                                      <X size={14} />
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
 
           {error ? (
             <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -1058,15 +1184,27 @@ function Modal({
         </div>
 
         <div className="flex flex-col gap-3 border-t border-slate-200 bg-white/95 px-6 py-5 shadow-[0_-12px_35px_rgba(15,23,42,0.06)] backdrop-blur sm:flex-row sm:items-center sm:justify-between dark:border-slate-800 dark:bg-slate-950/95">
-          <button
-            onClick={addEntry}
-            disabled={isReadOnly}
-            className={`inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${
-              isReadOnly ? "cursor-not-allowed opacity-60" : "cursor-pointer"
-            }`}
-          >
-            <Plus size={16} /> {isReadOnly ? "Mode Review" : "Tambah Uraian TL"}
-          </button>
+          {followUpStatus === "DONE" ? (
+            <button
+              onClick={addEntry}
+              disabled={isReadOnly}
+              className={`inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 ${
+                isReadOnly ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+              }`}
+            >
+              <Plus size={16} />{" "}
+              {isReadOnly ? "Mode Review" : "Tambah Uraian TL"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled
+              className="inline-flex cursor-not-allowed items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-100 px-5 py-3 text-sm font-bold text-slate-400 opacity-70 shadow-sm transition dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
+              title="Tambah Uraian TL dinonaktifkan karena status Belum di TL"
+            >
+              <Plus size={16} /> Tambah Uraian TL
+            </button>
+          )}
 
           <div className="flex items-center gap-3">
             <button
@@ -1286,12 +1424,6 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
 
     const requestKey = params.toString();
 
-    /**
-     * Mencegah request duplikat saat React StrictMode menjalankan effect dua kali
-     * di development. Refresh manual tetap bisa memaksa request terbaru dengan
-     * force: true. Perubahan filter tahun/BLUD otomatis membentuk requestKey baru,
-     * sehingga data langsung dimuat ulang tanpa harus klik Refresh Data.
-     */
     if (
       !options?.force &&
       (inFlightFetchKeyRef.current === requestKey ||
@@ -1367,6 +1499,7 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
         item.criteriaCode,
         item.criteriaLabel,
         item.aoi,
+        item.pendingReason || "",
         item.moduleLabel,
       ]
         .join(" ")
@@ -1388,6 +1521,26 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
     completedAoi: 0,
     pendingAoi: 0,
     totalFollowUps: 0,
+  };
+
+  const getFollowUpAssessmentSource = () => {
+    return isBpkp ? "BPKP_SELF_ASSESSMENT" : "BLUD_OPERATOR_SELF_ASSESSMENT";
+  };
+
+  const exportFollowUpPdf = () => {
+    const params = new URLSearchParams();
+    params.set("year", effectiveSelectedYear);
+    params.set("assessmentSource", getFollowUpAssessmentSource());
+
+    const normalizedBludCode = String(effectiveSelectedBludCode || "")
+      .trim()
+      .toUpperCase();
+
+    if (normalizedBludCode) {
+      params.set("bludCode", normalizedBludCode);
+    }
+
+    window.open(`/api/reports/follow-ups?${params.toString()}`, "_blank");
   };
 
   if (!isClientReady) {
@@ -1424,6 +1577,22 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
           </div>
 
           <div className="inline-flex w-fit shrink-0 flex-nowrap items-center gap-2 rounded-[26px] border border-slate-200 bg-slate-50/80 p-1.5 shadow-sm dark:border-slate-700 dark:bg-slate-800/50">
+            {isBpkp ? (
+              <button
+                type="button"
+                onClick={exportFollowUpPdf}
+                disabled={usesBpkpGlobalFilter && !effectiveSelectedBludCode}
+                className="inline-flex h-11 shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap rounded-2xl border border-blue-200 bg-white px-4 text-sm font-bold text-blue-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-blue-50 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-900/60 dark:bg-slate-900 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                title={
+                  usesBpkpGlobalFilter && !effectiveSelectedBludCode
+                    ? "Pilih BLUD terlebih dahulu untuk export PDF"
+                    : "Export PDF laporan tindak lanjut AOI"
+                }
+              >
+                <Download size={16} /> Export PDF
+              </button>
+            ) : null}
+
             {showBludFilter ? (
               <label className="inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-2xl bg-white px-3 shadow-sm ring-1 ring-slate-200/70 dark:bg-slate-900 dark:ring-slate-700">
                 <span className="text-xs font-bold uppercase tracking-wide text-slate-400">
@@ -1446,11 +1615,27 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
                   ) : null}
                   {bludOptions.map((blud) => (
                     <option key={blud.id} value={blud.code}>
-                      {blud.code} - {blud.name}
+                      {blud.name}
                     </option>
                   ))}
                 </select>
               </label>
+            ) : null}
+
+            {!isBpkp ? (
+              <button
+                type="button"
+                onClick={exportFollowUpPdf}
+                disabled={usesBpkpGlobalFilter && !effectiveSelectedBludCode}
+                className="inline-flex h-11 shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap rounded-2xl border border-blue-200 bg-white px-4 text-sm font-bold text-blue-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-blue-50 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-900/60 dark:bg-slate-900 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                title={
+                  usesBpkpGlobalFilter && !effectiveSelectedBludCode
+                    ? "Pilih BLUD terlebih dahulu untuk export PDF"
+                    : "Export PDF laporan tindak lanjut AOI"
+                }
+              >
+                <Download size={16} /> Export PDF
+              </button>
             ) : null}
 
             <label className="inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-2xl bg-white px-3 shadow-sm ring-1 ring-slate-200/70 dark:bg-slate-900 dark:ring-slate-700">
@@ -1600,7 +1785,10 @@ export default function TindakLanjutPage({ session }: { session?: any }) {
             ))
           ) : filteredItems.length === 0 ? (
             <div className="col-span-full rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center dark:border-slate-700 dark:bg-slate-900/70">
-              <AlertCircle className="mx-auto text-slate-400 dark:text-slate-500" size={28} />
+              <AlertCircle
+                className="mx-auto text-slate-400 dark:text-slate-500"
+                size={28}
+              />
               <p className="mt-4 text-sm font-semibold text-slate-700 dark:text-slate-100">
                 Tidak ada AOI yang sesuai dengan filter.
               </p>
