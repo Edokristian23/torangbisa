@@ -340,7 +340,8 @@ function Modal({
     };
   };
 
-  const MAX_FILE_SIZE = 1 * 1024 * 1024;
+  const MAX_FILE_SIZE_MB = 5;
+  const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
   const MAX_FILES_PER_ENTRY = 5;
 
   const validateFiles = (filesToValidate: FileList) => {
@@ -356,7 +357,7 @@ function Modal({
       }
 
       if (file.size > MAX_FILE_SIZE) {
-        errors.push(`Ukuran file ${file.name} melebihi 1MB.`);
+        errors.push(`Ukuran file ${file.name} melebihi ${MAX_FILE_SIZE_MB}MB.`);
         return;
       }
 
@@ -997,7 +998,7 @@ function Modal({
 
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                            Maks 1MB
+                            Maks {MAX_FILE_SIZE_MB}MB
                           </span>
 
                           <div className="rounded-full bg-blue-100 px-3 py-1.5 text-xs font-black text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">

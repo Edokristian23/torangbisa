@@ -79,7 +79,8 @@ const ALLOWED_EXTENSIONS = [
   "xls",
   "xlsx",
 ];
-const MAX_FILE_SIZE = 1 * 1024 * 1024;
+const MAX_FILE_SIZE_MB = 5;
+const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 
 export async function POST(request: Request) {
   try {
@@ -125,7 +126,8 @@ export async function POST(request: Request) {
     if (isBludAdminReviewOnly(role)) {
       return NextResponse.json(
         {
-          message: "Role Admin BLUD hanya dapat melakukan review tindak lanjut AOI.",
+          message:
+            "Role Admin BLUD hanya dapat melakukan review tindak lanjut AOI.",
         },
         { status: 403 },
       );
@@ -153,7 +155,6 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
-
 
       if (!responseOwnedByBpkp) {
         return NextResponse.json(
@@ -193,7 +194,9 @@ export async function POST(request: Request) {
       const arrayBuffer = await file.arrayBuffer();
       if (arrayBuffer.byteLength > MAX_FILE_SIZE) {
         return NextResponse.json(
-          { message: `Ukuran file ${file.name} melebihi 1MB.` },
+          {
+            message: `Ukuran file ${file.name} melebihi ${MAX_FILE_SIZE_MB}MB.`,
+          },
           { status: 400 },
         );
       }

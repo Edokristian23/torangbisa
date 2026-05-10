@@ -142,7 +142,8 @@ type RejectedInfoState = {
   rows: Row[];
 };
 
-const MAX_FILE_SIZE = 1 * 1024 * 1024;
+const MAX_FILE_SIZE_MB = 5;
+const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 const MAX_FILES_PER_PARAM = 5;
 const REQUIRED_OPERATOR_PARAMS_FOR_SUBMIT = 28;
 const ALLOWED_EXTENSIONS = [
@@ -1236,9 +1237,8 @@ function FormBody({
 
           {/* RIGHT */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* ⬅️ PINDAH KE SINI */}
             <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-[11px] font-bold text-slate-600 dark:text-blue-100 dark:text-slate-300">
-              Maks 1MB
+              Maks {MAX_FILE_SIZE_MB}MB
             </span>
 
             <div className="rounded-full bg-blue-100 px-3 py-1.5 text-xs font-black text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
@@ -1561,9 +1561,7 @@ export default function EdittableTable({
     ? String(globalBludCode || "").toUpperCase()
     : localSelectedBludCode;
 
-  const effectiveFetchBludCode = usesBpkpGlobalFilter
-    ? selectedBludCode
-    : "";
+  const effectiveFetchBludCode = usesBpkpGlobalFilter ? selectedBludCode : "";
 
   const setSelectedBludCode = (code: string) => {
     const normalizedCode = String(code || "").toUpperCase();
@@ -1877,7 +1875,8 @@ export default function EdittableTable({
       const requestUserRole = String(
         resolvedUserRole || currentUserRoleRef.current || "",
       ).toUpperCase();
-      const shouldSendBludCodeForFetch = isBpkpGlobalFilterRole(requestUserRole);
+      const shouldSendBludCodeForFetch =
+        isBpkpGlobalFilterRole(requestUserRole);
 
       if (effectiveFetchBludCode && shouldSendBludCodeForFetch) {
         params.set("bludCode", effectiveFetchBludCode);
@@ -1950,8 +1949,7 @@ export default function EdittableTable({
     const roleForFetchKey = String(
       resolvedUserRole || currentUserRoleRef.current || "",
     ).toUpperCase();
-    const shouldUseBludCodeInFetchKey =
-      isBpkpGlobalFilterRole(roleForFetchKey);
+    const shouldUseBludCodeInFetchKey = isBpkpGlobalFilterRole(roleForFetchKey);
 
     // Admin/BPKP wajib menunggu BLUD dari global filter siap dulu.
     // Ini mencegah request pertama tanpa bludCode, lalu request kedua dengan bludCode.
@@ -2112,7 +2110,7 @@ export default function EdittableTable({
         return;
       }
       if (file.size > MAX_FILE_SIZE) {
-        errors.push(`Ukuran file ${file.name} melebihi 1MB.`);
+        errors.push(`Ukuran file ${file.name} melebihi ${MAX_FILE_SIZE_MB}MB.`);
         return;
       }
       validFiles.push(file);
