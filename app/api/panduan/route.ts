@@ -34,11 +34,21 @@ const ALLOWED_MIME_TYPES = new Set([
 ]);
 
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
+const LINK_MIME_TYPE = "text/uri-list";
 
 function getFileExtension(fileName: string) {
   const parts = fileName.split(".");
   if (parts.length <= 1) return null;
   return parts.pop()?.toLowerCase() || null;
+}
+
+function isValidHttpUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol);
+  } catch {
+    return false;
+  }
 }
 
 async function getCurrentUser() {
@@ -119,7 +129,7 @@ export async function POST(request: NextRequest) {
       : "PETUNJUK_TOOLS";
     const name = String(formData.get("name") || "").trim();
     const description = String(formData.get("description") || "").trim();
-    const file = formData.get("file");
+    const sourceType = String(formData.get("sourceType") || "FILE").trim().toUpperCase();
 
     if (!name) {
       return NextResponse.json(
@@ -127,6 +137,52 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+
+    if (sourceType === "LINK") {
+      const linkUrl = String(formData.get("linkUrl") || "").trim();
+
+      if (!isValidHttpUrl(linkUrl)) {
+        return NextResponse.json(
+          { message: "Link panduan wajib berupa URL http/https yang valid." },
+          { status: 400 },
+        );
+      }
+
+      const created = await prisma.guideDocument.create({
+        data: {
+          category,
+          name,
+          description: description || null,
+          originalName: linkUrl,
+          mimeType: LINK_MIME_TYPE,
+          fileExtension: "url",
+          fileSize: 0,
+          checksumSha256: crypto.createHash("sha256").update(linkUrl).digest("hex"),
+          fileData: Buffer.alloc(0),
+          uploadedById: user.id,
+        },
+        select: { id: true, name: true, category: true },
+      });
+
+      await createAuditLog({
+        actorId: user.id,
+        action: "CREATE_GUIDE_LINK",
+        entityType: "GuideDocument",
+        entityId: created.id,
+        metadata: {
+          category,
+          name,
+          linkUrl,
+        },
+      });
+
+      return NextResponse.json(
+        { message: "Link panduan berhasil ditambahkan.", document: created },
+        { status: 201 },
+      );
+    }
+
+    const file = formData.get("file");
 
     if (!(file instanceof File)) {
       return NextResponse.json(

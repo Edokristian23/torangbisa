@@ -6,10 +6,13 @@ import {
   BookOpen,
   Download,
   Edit3,
+  ExternalLink,
   FileArchive,
   FileSpreadsheet,
   FileText,
+  Link2,
   Loader2,
+  PlayCircle,
   Plus,
   Search,
   Trash2,
@@ -22,6 +25,8 @@ import {
   getGuideCategoryOption,
   type GuideDocumentCategory,
 } from '@/lib/guide-categories';
+
+type GuideSourceType = 'FILE' | 'LINK';
 
 type GuideDocument = {
   id: string;
@@ -49,6 +54,7 @@ type FetchDocumentsResult = {
 };
 
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
+const LINK_MIME_TYPE = 'text/uri-list';
 
 let initialPanduanRequest: Promise<FetchDocumentsResult> | null = null;
 
@@ -69,7 +75,44 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function isLinkDocument(document: GuideDocument) {
+  return document.mimeType === LINK_MIME_TYPE || document.fileExtension === 'url';
+}
+
+function isValidUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function getYoutubeEmbedUrl(value: string) {
+  try {
+    const url = new URL(value.trim());
+    const hostname = url.hostname.replace(/^www\./, '');
+    let videoId = '';
+
+    if (hostname === 'youtu.be') {
+      videoId = url.pathname.split('/').filter(Boolean)[0] || '';
+    }
+
+    if (hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'youtube-nocookie.com') {
+      if (url.pathname.startsWith('/watch')) videoId = url.searchParams.get('v') || '';
+      if (url.pathname.startsWith('/shorts/') || url.pathname.startsWith('/embed/')) {
+        videoId = url.pathname.split('/').filter(Boolean)[1] || '';
+      }
+    }
+
+    return videoId ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}` : null;
+  } catch {
+    return null;
+  }
+}
+
 function getFileIcon(mimeType: string) {
+  if (mimeType === LINK_MIME_TYPE) return PlayCircle;
   if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) return FileSpreadsheet;
   if (mimeType.includes('zip') || mimeType.includes('archive')) return FileArchive;
   return FileText;
@@ -132,7 +175,11 @@ export default function PanduanPage() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [sourceType, setSourceType] = useState<GuideSourceType>('FILE');
+  const [linkUrl, setLinkUrl] = useState('');
   const [editing, setEditing] = useState<GuideDocument | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<GuideDocument | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const canManage = permissions.canManage;
 
@@ -190,6 +237,8 @@ export default function PanduanPage() {
     setName('');
     setDescription('');
     setFile(null);
+    setSourceType('FILE');
+    setLinkUrl('');
     setEditing(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -197,6 +246,16 @@ export default function PanduanPage() {
   const changeActiveCategory = (value: GuideDocumentCategory) => {
     setActiveCategory(value);
     if (!editing) setCategory(value);
+  };
+
+  const changeSourceType = (value: GuideSourceType) => {
+    setSourceType(value);
+    setError(null);
+    if (value === 'FILE') setLinkUrl('');
+    if (value === 'LINK') {
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -214,8 +273,13 @@ export default function PanduanPage() {
       return;
     }
 
-    if (!editing && !file) {
+    if (!editing && sourceType === 'FILE' && !file) {
       setError('File dokumen wajib diupload.');
+      return;
+    }
+
+    if (!editing && sourceType === 'LINK' && !isValidUrl(linkUrl)) {
+      setError('Link panduan wajib berupa URL http/https yang valid.');
       return;
     }
 
@@ -240,7 +304,9 @@ export default function PanduanPage() {
               formData.append('category', category);
               formData.append('name', name);
               formData.append('description', description);
-              if (file) formData.append('file', file);
+              formData.append('sourceType', sourceType);
+              if (sourceType === 'FILE' && file) formData.append('file', file);
+              if (sourceType === 'LINK') formData.append('linkUrl', linkUrl.trim());
               return formData;
             })(),
           });
@@ -268,29 +334,45 @@ export default function PanduanPage() {
     setName(document.name);
     setDescription(document.description || '');
     setFile(null);
+    setSourceType(isLinkDocument(document) ? 'LINK' : 'FILE');
+    setLinkUrl(isLinkDocument(document) ? document.originalName : '');
     setMessage(null);
     setError(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleDelete = async (document: GuideDocument) => {
-    if (!canManage) return;
-    const confirmed = window.confirm(`Hapus dokumen panduan "${document.name}"?`);
-    if (!confirmed) return;
+  const requestDelete = (document: GuideDocument) => {
+    if (!canManage || deleting) return;
+    setDeleteTarget(document);
+    setMessage(null);
+    setError(null);
+  };
+
+  const closeDeleteDialog = () => {
+    if (deleting) return;
+    setDeleteTarget(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!canManage || !deleteTarget || deleting) return;
 
     setMessage(null);
     setError(null);
+    setDeleting(true);
 
     try {
-      const response = await fetch(`/api/panduan/${document.id}`, { method: 'DELETE' });
+      const response = await fetch(`/api/panduan/${deleteTarget.id}`, { method: 'DELETE' });
       const payload = await parseJsonSafe(response);
       if (!response.ok) throw new Error(payload.message || 'Gagal menghapus dokumen.');
 
       initialPanduanRequest = null;
       setMessage(payload.message || 'Dokumen berhasil dihapus.');
+      setDeleteTarget(null);
       await fetchDocuments();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal menghapus dokumen.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -365,7 +447,7 @@ export default function PanduanPage() {
               <div>
                 <h2 className="text-lg font-black text-slate-950 dark:text-white">{editing ? 'Ubah Metadata Panduan' : 'Tambah Dokumen Panduan'}</h2>
                 <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
-                  Pilih submenu, isi nama dokumen, lalu upload file panduan. File tidak diubah saat edit untuk menjaga integritas dokumen.
+                  Pilih sumber panduan berupa dokumen atau link video. File tidak diubah saat edit untuk menjaga integritas dokumen.
                 </p>
               </div>
               {editing && (
@@ -374,6 +456,19 @@ export default function PanduanPage() {
                 </button>
               )}
             </div>
+
+            {!editing && (
+              <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                <button type="button" onClick={() => changeSourceType('FILE')} className={`rounded-2xl border px-4 py-3 text-left transition ${sourceType === 'FILE' ? 'border-blue-500 bg-blue-50 text-blue-700 ring-4 ring-blue-500/10 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300'}`}>
+                  <span className="flex items-center gap-2 text-sm font-black"><UploadCloud className="h-4 w-4" /> Upload Dokumen</span>
+                  <span className="mt-1 block text-xs font-semibold opacity-80">PDF, Word, Excel, PowerPoint, gambar, atau teks.</span>
+                </button>
+                <button type="button" onClick={() => changeSourceType('LINK')} className={`rounded-2xl border px-4 py-3 text-left transition ${sourceType === 'LINK' ? 'border-blue-500 bg-blue-50 text-blue-700 ring-4 ring-blue-500/10 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300'}`}>
+                  <span className="flex items-center gap-2 text-sm font-black"><Link2 className="h-4 w-4" /> Upload Link</span>
+                  <span className="mt-1 block text-xs font-semibold opacity-80">Cocok untuk video YouTube atau materi eksternal.</span>
+                </button>
+              </div>
+            )}
 
             <div className="grid gap-4 lg:grid-cols-3">
               <label className="block">
@@ -390,13 +485,23 @@ export default function PanduanPage() {
                 <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Contoh: Panduan Pengisian Self Assessment" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none ring-blue-500/20 transition focus:border-blue-500 focus:ring-4 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
               </label>
 
-              <label className="block">
-                <span className="mb-2 block text-sm font-black text-slate-700 dark:text-slate-200">File Dokumen</span>
-                <div className="relative">
-                  <input ref={fileInputRef} type="file" disabled={!!editing} onChange={(event) => setFile(event.target.files?.[0] || null)} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition file:mr-4 file:rounded-xl file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:text-sm file:font-black file:text-blue-700 hover:file:bg-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:file:bg-blue-950 dark:file:text-blue-300" />
-                  <UploadCloud className="pointer-events-none absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-                </div>
-              </label>
+              {sourceType === 'FILE' ? (
+                <label className="block">
+                  <span className="mb-2 block text-sm font-black text-slate-700 dark:text-slate-200">File Dokumen</span>
+                  <div className="relative">
+                    <input ref={fileInputRef} type="file" disabled={!!editing} onChange={(event) => setFile(event.target.files?.[0] || null)} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition file:mr-4 file:rounded-xl file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:text-sm file:font-black file:text-blue-700 hover:file:bg-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:file:bg-blue-950 dark:file:text-blue-300" />
+                    <UploadCloud className="pointer-events-none absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                  </div>
+                </label>
+              ) : (
+                <label className="block">
+                  <span className="mb-2 block text-sm font-black text-slate-700 dark:text-slate-200">Link Video / Materi</span>
+                  <div className="relative">
+                    <input value={linkUrl} disabled={!!editing} onChange={(event) => setLinkUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-11 text-sm font-semibold text-slate-800 outline-none ring-blue-500/20 transition focus:border-blue-500 focus:ring-4 disabled:cursor-not-allowed disabled:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                    <Link2 className="pointer-events-none absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                  </div>
+                </label>
+              )}
             </div>
 
             <label className="mt-4 block">
@@ -442,11 +547,27 @@ export default function PanduanPage() {
               <p className="mt-1 text-xs font-semibold text-slate-400">Dokumen akan muncul setelah Admin BPKP melakukan upload.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="columns-1 gap-4 lg:columns-2 [column-fill:balance]">
               {filteredDocuments.map((document) => {
                 const DocumentIcon = getFileIcon(document.mimeType);
+                const linkDocument = isLinkDocument(document);
+                const embedUrl = linkDocument ? getYoutubeEmbedUrl(document.originalName) : null;
+
                 return (
-                  <article key={document.id} className="group rounded-3xl border border-slate-200 bg-gradient-to-br from-white to-blue-50/40 p-5 transition hover:-translate-y-0.5 hover:shadow-lg dark:border-slate-700 dark:from-slate-950 dark:to-slate-900">
+                  <article key={document.id} className="group mb-4 inline-block w-full break-inside-avoid overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-white to-blue-50/40 p-5 align-top transition hover:-translate-y-0.5 hover:shadow-lg dark:border-slate-700 dark:from-slate-950 dark:to-slate-900">
+                    {linkDocument && embedUrl && (
+                      <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950 shadow-inner dark:border-slate-800">
+                        <iframe
+                          src={embedUrl}
+                          title={document.name}
+                          className="aspect-video w-full"
+                          loading="lazy"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                          allowFullScreen
+                        />
+                      </div>
+                    )}
+
                     <div className="flex items-start gap-4">
                       <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
                         <DocumentIcon className="h-6 w-6" />
@@ -455,26 +576,32 @@ export default function PanduanPage() {
                         <h3 className="truncate text-base font-black text-slate-950 dark:text-white">{document.name}</h3>
                         <p className="mt-1 line-clamp-2 text-sm font-medium text-slate-500 dark:text-slate-400">{document.description || 'Tidak ada deskripsi.'}</p>
                         <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-slate-500 dark:text-slate-400">
-                          <span className="rounded-full bg-slate-100 px-2.5 py-1 dark:bg-slate-800">{document.fileExtension?.toUpperCase() || 'FILE'}</span>
-                          <span className="rounded-full bg-slate-100 px-2.5 py-1 dark:bg-slate-800">{formatFileSize(document.fileSize)}</span>
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 dark:bg-slate-800">{linkDocument ? 'VIDEO LINK' : document.fileExtension?.toUpperCase() || 'FILE'}</span>
+                          {!linkDocument && <span className="rounded-full bg-slate-100 px-2.5 py-1 dark:bg-slate-800">{formatFileSize(document.fileSize)}</span>}
                           <span className="rounded-full bg-slate-100 px-2.5 py-1 dark:bg-slate-800">{formatDate(document.createdAt)}</span>
                         </div>
                       </div>
                     </div>
 
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
-                      <p className="max-w-full truncate text-xs font-semibold text-slate-400">File: {document.originalName}</p>
+                      <p className="max-w-full truncate text-xs font-semibold text-slate-400">{linkDocument ? `Link: ${document.originalName}` : `File: ${document.originalName}`}</p>
                       <div className="flex items-center gap-2">
-                        <a href={`/api/panduan/${document.id}/file`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 transition hover:bg-blue-100 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60">
-                          <Download className="h-4 w-4" /> Preview
-                        </a>
+                        {linkDocument ? (
+                          <a href={document.originalName} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 transition hover:bg-blue-100 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60">
+                            <ExternalLink className="h-4 w-4" /> Buka Link
+                          </a>
+                        ) : (
+                          <a href={`/api/panduan/${document.id}/file`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700 transition hover:bg-blue-100 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60">
+                            <Download className="h-4 w-4" /> Preview
+                          </a>
+                        )}
 
                         {canManage && (
                           <>
                             <button type="button" onClick={() => handleEdit(document)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
                               <Edit3 className="h-4 w-4" /> Ubah
                             </button>
-                            <button type="button" onClick={() => void handleDelete(document)} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700 transition hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+                            <button type="button" onClick={() => requestDelete(document)} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700 transition hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
                               <Trash2 className="h-4 w-4" /> Hapus
                             </button>
                           </>
@@ -488,6 +615,58 @@ export default function PanduanPage() {
           )}
         </div>
       </div>
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="delete-guide-title">
+          <div className="w-full max-w-md overflow-hidden rounded-[28px] border border-white/70 bg-white shadow-2xl shadow-slate-950/30 dark:border-slate-700 dark:bg-slate-900">
+            <div className="relative overflow-hidden border-b border-slate-100 px-6 py-5 dark:border-slate-800">
+              <SoftGlow />
+              <div className="relative flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-red-600 ring-1 ring-red-100 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900/50">
+                  <Trash2 className="h-6 w-6" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-black uppercase tracking-[0.2em] text-red-500 dark:text-red-300">Konfirmasi Hapus</p>
+                  <h3 id="delete-guide-title" className="mt-1 text-xl font-black text-slate-950 dark:text-white">Hapus panduan?</h3>
+                  <p className="mt-2 text-sm font-medium leading-6 text-slate-500 dark:text-slate-400">
+                    Tindakan ini akan menghapus panduan dari daftar aktif dan tidak dapat dibatalkan melalui halaman ini.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-5">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-950/50">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Nama Panduan</p>
+                <p className="mt-1 line-clamp-2 text-sm font-black text-slate-800 dark:text-slate-100">{deleteTarget.name}</p>
+                <p className="mt-2 truncate text-xs font-semibold text-slate-400">
+                  {isLinkDocument(deleteTarget) ? `Link: ${deleteTarget.originalName}` : `File: ${deleteTarget.originalName}`}
+                </p>
+              </div>
+
+              <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeDeleteDialog}
+                  disabled={deleting}
+                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void confirmDelete()}
+                  disabled={deleting}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 py-3 text-sm font-black text-white shadow-lg shadow-red-500/20 transition hover:-translate-y-0.5 hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-red-700 dark:hover:bg-red-600"
+                >
+                  {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  Hapus Panduan
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
