@@ -143,9 +143,9 @@ const Header = ({ session, onToggleSidebar, title, subTitle }: HeaderProps) => {
                 <p className="max-w-32 truncate text-sm font-semibold uppercase text-slate-900 dark:text-white">
                   {userName}
                 </p>
-                <p className="truncate text-xs capitalize text-slate-500 dark:text-slate-400">
+                {/* <p className="truncate text-xs capitalize text-slate-500 dark:text-slate-400">
                   {userRole}
-                </p>
+                </p> */}
               </div>
 
               <ChevronDown
@@ -161,9 +161,9 @@ const Header = ({ session, onToggleSidebar, title, subTitle }: HeaderProps) => {
                   <p className="truncate text-sm font-semibold uppercase text-slate-900 dark:text-white">
                     {userName}
                   </p>
-                  <p className="truncate text-xs capitalize text-slate-500 dark:text-slate-400">
+                  {/* <p className="truncate text-xs capitalize text-slate-500 dark:text-slate-400">
                     {userRole}
-                  </p>
+                  </p> */}
                 </div>
 
                 <div className="p-2">

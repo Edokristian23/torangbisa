@@ -14,6 +14,8 @@ async function main() {
     { code: 'BLUD03', name: 'RSUD Labuha', region: 'Kabupaten Halmahera Selatan' },
     { code: 'BLUD04', name: 'RSUD Jailolo', region: 'Kabupaten Halmahera Barat' },
     { code: 'BLUD05', name: 'RSUD Tobelo', region: 'Kabupaten  Halmahera Utara' },
+    { code: 'BLU01', name: 'Sultan Babullah', region: 'Kota Ternate' },
+    { code: 'BLU02', name: 'Universitas Khairun', region: 'Kota Ternate' },
   ];
 
   for (const item of bluds) {

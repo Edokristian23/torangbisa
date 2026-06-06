@@ -544,10 +544,10 @@ export async function GET(request: Request) {
 
     const assessmentFilledByLabel = useBpkpSelfAssessmentRows
       ? "Admin BPKP"
-      : "Operator BLUD";
+      : "Operator BLU/BLUD";
     const assessmentReportSourceLabel = useBpkpSelfAssessmentRows
       ? "Self Assessment Admin BPKP"
-      : "Self Assessment Operator BLUD";
+      : "Self Assessment Operator BLU/BLUD";
 
     let bludId = session.user.bludId;
 
@@ -727,10 +727,10 @@ export async function GET(request: Request) {
 
     const drawTitle = () => {
       setFont(true, 9);
-      doc.text("LAPORAN SELF ASSESSMENT MANAJEMEN RISIKO BLUD", tableX, y + 7);
+      doc.text("LAPORAN SELF ASSESSMENT MANAJEMEN RISIKO BLU/BLUD", tableX, y + 7);
       setFont(false, 6.8);
       doc.text(
-        `BLUD: ${blud.code || "-"} - ${blud.name || "-"} | Tahun: ${year} | Status: ${mapStatusLabel(getGlobalStatus(periods))} | Diisi oleh: ${assessmentFilledByLabel}`,
+        `BLU/BLUD: ${blud.code || "-"} - ${blud.name || "-"} | Tahun: ${year} | Status: ${mapStatusLabel(getGlobalStatus(periods))} | Diisi oleh: ${assessmentFilledByLabel}`,
         tableX,
         y + 18,
       );

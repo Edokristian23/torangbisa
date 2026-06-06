@@ -1223,6 +1223,8 @@ export default function EnterpriseAssessmentDashboard() {
     "RSUD Labuha",
     "RSUD Jailolo",
     "RSUD Tidore",
+    "Bandara Sultan Babullah",
+    "Universitas Khairun"
   ];
 
   const normalizedBludScores = DEFAULT_BLUDS.map((name) => {
@@ -1322,10 +1324,10 @@ export default function EnterpriseAssessmentDashboard() {
     () => [
       {
         key: "blud",
-        label: "BLUD Telah Mengisi SA",
+        label: "BLU/BLUD Telah Mengisi SA",
         value: summary.totalResponses,
         icon: ClipboardList,
-        suffix: `${summary.totalResponses} dari ${summary.totalBluds} BLUD`,
+        suffix: `${summary.totalResponses} dari ${summary.totalBluds} BLU/BLUD`,
         clickable: true,
         onClick: () => setShowBludModal(true),
         actionHint: "Klik ikon untuk melihat daftar BLUD",
@@ -1412,7 +1414,7 @@ export default function EnterpriseAssessmentDashboard() {
                     Dashboard Self Assessment
                   </h1>
                   <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-                    Hasil self assessment BLUD berdasarkan tahun yang dipilih.
+                    Hasil self assessment BLU/BLUD berdasarkan tahun yang dipilih.
                   </p>
                 </div>
               </div>
@@ -1602,10 +1604,10 @@ export default function EnterpriseAssessmentDashboard() {
 
                 <div>
                   <h3 className="text-base font-semibold leading-tight">
-                    Perbandingan Skor Total Antar BLUD
+                    Perbandingan Skor Total Antar BLU/BLUD
                   </h3>
                   <p className="mt-1 text-sm text-blue-100 dark:text-slate-300">
-                    Perbandingan total nilai self assessment seluruh BLUD.
+                    Perbandingan total nilai self assessment seluruh BLU/BLUD.
                   </p>
                 </div>
               </div>
@@ -1678,11 +1680,11 @@ export default function EnterpriseAssessmentDashboard() {
 
                 <div>
                   <h3 className="text-base font-semibold leading-tight">
-                    Distribusi per BLUD
+                    Distribusi per BLU/BLUD
                   </h3>
                   {viewerRole !== "BPKP_ADMIN" ? (
                     <p className="mt-1 text-sm text-blue-100 dark:text-slate-300">
-                      Skor di bawah 3, AOI, dan tindak lanjut tiap BLUD.
+                      Skor di bawah 3, AOI, dan tindak lanjut tiap BLU/BLUD.
                     </p>
                   ) : null}
                 </div>
@@ -1701,7 +1703,7 @@ export default function EnterpriseAssessmentDashboard() {
                       Monitoring
                     </div>
                     <p className="mt-3 text-base font-black text-slate-950 dark:text-white">
-                      Distribusi per BLUD
+                      Distribusi per BLU/BLUD
                     </p>
                     <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
                       Progress dihitung langsung dari tindak lanjut yang

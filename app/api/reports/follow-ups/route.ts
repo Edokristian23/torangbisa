@@ -817,7 +817,7 @@ export async function GET(request: Request) {
       setFont(true, 13, white);
       doc.text("LAPORAN TINDAK LANJUT AOI", tableX + 16, y + 20);
       setFont(true, 9, [219, 234, 254]);
-      doc.text("SELF ASSESSMENT MANAJEMEN RISIKO BLUD", tableX + 16, y + 36);
+      doc.text("SELF ASSESSMENT MANAJEMEN RISIKO BLU/BLUD", tableX + 16, y + 36);
 
       setFont(true, 7, [219, 234, 254]);
       doc.text("TAHUN", tableX + tableWidth - 200, y + 20);
@@ -829,7 +829,7 @@ export async function GET(request: Request) {
       const metaGap = 10;
       const metaW = (tableWidth - metaGap * 3) / 4;
       drawMetaCard(tableX, y, metaW, "BLUD", `${blud.code || "-"} - ${blud.name || "-"}`);
-      drawMetaCard(tableX + (metaW + metaGap), y, metaW, "Sumber Assessment", assessmentSource === "BPKP_SELF_ASSESSMENT" ? "Self Assessment Admin BPKP" : "Self Assessment Operator BLUD");
+      drawMetaCard(tableX + (metaW + metaGap), y, metaW, "Sumber Assessment", assessmentSource === "BPKP_SELF_ASSESSMENT" ? "Self Assessment Admin BPKP" : "Self Assessment Operator BLU/BLUD");
       drawMetaCard(tableX + (metaW + metaGap) * 2, y, metaW, "Status Assessment", mapStatusLabel(getGlobalStatus(periods)));
       drawMetaCard(tableX + (metaW + metaGap) * 3, y, metaW, "Tanggal Cetak", formatDateTime(new Date()));
 
