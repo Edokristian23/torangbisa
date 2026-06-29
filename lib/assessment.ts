@@ -68,20 +68,6 @@ export function canReviewAssessment(role: UserRole, status: AssessmentStatus) {
   return false;
 }
 
-/**
- * Actor yang boleh melakukan submit ke tahap berikutnya.
- *
- * - BLUD_OPERATOR:
- *   submit dari DRAFT / REVISION_REQUESTED -> SUBMITTED
- *
- * - BLUD_ADMIN:
- *   submit ke BPKP setelah hasil review admin siap,
- *   umumnya dari APPROVED atau setelah revisi BPKP selesai.
- *
- * Backend workflow tetap harus memvalidasi:
- * - operator: semua parameter sudah lengkap
- * - admin: semua row review sudah accepted
- */
 export function canSubmitAssessment(role: UserRole, status: AssessmentStatus) {
   if (role === 'BLUD_OPERATOR') {
     return status === 'DRAFT' || status === 'REVISION_REQUESTED';
@@ -94,16 +80,6 @@ export function canSubmitAssessment(role: UserRole, status: AssessmentStatus) {
   return false;
 }
 
-/**
- * Status berikut yang diizinkan dari sisi helper umum.
- *
- * Catatan penting:
- * Karena enum status period Anda generik, status SUBMITTED dipakai di dua tahap:
- * 1) Operator -> Admin
- * 2) Admin -> BPKP
- *
- * Jadi penentuan "submit ke siapa" tetap ditentukan dari role actor saat ini.
- */
 export function allowedNextStatuses(role: UserRole, status: AssessmentStatus) {
   // Operator BLUD: isi / revisi lalu submit ke Admin BLUD
   if (role === 'BLUD_OPERATOR') {

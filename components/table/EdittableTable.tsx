@@ -142,7 +142,7 @@ type RejectedInfoState = {
   rows: Row[];
 };
 
-const MAX_FILE_SIZE_MB = 5;
+const MAX_FILE_SIZE_MB = 20;
 const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 const MAX_FILES_PER_PARAM = 5;
 const REQUIRED_OPERATOR_PARAMS_FOR_SUBMIT = 28;

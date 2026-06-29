@@ -14,8 +14,8 @@ const ALLOWED_EXTENSIONS = [
   "xls",
   "xlsx",
 ];
-const MAX_FILE_SIZE_MB = 5;
-const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
+const MAX_FILE_SIZE_MB = 20;
+const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024; 
 
 export async function POST(request: Request) {
   try {

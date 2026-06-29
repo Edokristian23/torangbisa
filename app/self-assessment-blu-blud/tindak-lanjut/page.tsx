@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   isBpkpGlobalFilterRole,
   useBpkpGlobalFilterStore,
-} from "../../stores/useBpkpGlobalFilterStore";
+} from "../../../stores/useBpkpGlobalFilterStore";
 import {
   AlertCircle,
   ClipboardCheck,
@@ -340,8 +340,8 @@ function Modal({
     };
   };
 
-  const MAX_FILE_SIZE_MB = 5;
-  const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
+  const MAX_FILE_SIZE_MB = 20;
+const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
   const MAX_FILES_PER_ENTRY = 5;
 
   const validateFiles = (filesToValidate: FileList) => {

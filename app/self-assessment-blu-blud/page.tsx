@@ -1,10 +1,10 @@
 import { auth } from "@/auth";
-import HomePage from "./HomePage";
+import HomeClient from "@/app/home-client";
 
 const Home = async () => {
   const session = await auth();
 
-  return <HomePage session={session} />;
+  return <HomeClient session={session} />;
 };
 
 export default Home;

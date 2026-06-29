@@ -3,18 +3,18 @@
 import Sidebar from '@/components/layout/sidebar';
 import Header from '@/components/layout/header';
 import { useState } from 'react';
-import Dashboard from './dashboard/page';
-import User from './user/page';
-import KualitasPerencanaan from './perencanaan/page';
-import Kepemimpinan from './kapabilitas/kepemimpinan/page';
-import Kebijakan from './kapabilitas/kebijakan/page';
-import SDM from './kapabilitas/SDM/page';
-import Kemitraan from './kapabilitas/kemitraan/page';
-import ProseBisnis from './kapabilitas/probis/page';
-import AktivitasPenanganan from './hasil/aktivitas/page';
-import Outcomes from './hasil/outcomes/page';
-import TindakLanjut from './tindak-lanjut/page';
-import Panduan from './panduan/page';
+import Dashboard from './self-assessment-blu-blud/dashboard/page';
+import User from './self-assessment-blu-blud/user/page';
+import KualitasPerencanaan from './self-assessment-blu-blud/perencanaan/page';
+import Kepemimpinan from './self-assessment-blu-blud/kapabilitas/kepemimpinan/page';
+import Kebijakan from './self-assessment-blu-blud/kapabilitas/kebijakan/page';
+import SDM from './self-assessment-blu-blud/kapabilitas/SDM/page';
+import Kemitraan from './self-assessment-blu-blud/kapabilitas/kemitraan/page';
+import ProseBisnis from './self-assessment-blu-blud/kapabilitas/probis/page';
+import AktivitasPenanganan from './self-assessment-blu-blud/hasil/aktivitas/page';
+import Outcomes from './self-assessment-blu-blud/hasil/outcomes/page';
+import TindakLanjut from './self-assessment-blu-blud/tindak-lanjut/page';
+import Panduan from './self-assessment-blu-blud/panduan/page';
 import { PAGE_CONFIG } from '@/components/config/page-config';
 
 const HomeClient = ({ session }: any) => {

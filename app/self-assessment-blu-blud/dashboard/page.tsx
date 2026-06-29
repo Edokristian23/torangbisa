@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useBpkpGlobalFilterStore } from "../../stores/useBpkpGlobalFilterStore";
+import { useBpkpGlobalFilterStore } from "../../../stores/useBpkpGlobalFilterStore";
 
 import {
   Award,
