@@ -8,12 +8,18 @@ export default function LogoutButton() {
   const [isPending, startTransition] = useTransition();
 
   const handleLogout = () => {
-    startTransition(async () => {
+  startTransition(async () => {
+    try {
       await signOut({
-        redirectTo: "/login",
+        redirect: false,
       });
-    });
-  };
+
+      window.location.replace("/login");
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
+  });
+};
 
   return (
     <button
