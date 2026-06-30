@@ -9,6 +9,7 @@ import {
   BookOpen,
   ListChecks,
 } from "lucide-react";
+import LogoutButton from "@/components/components/logout-button";
 
 type HomePageProps = {
   session: any;
@@ -24,20 +25,22 @@ const menus = [
     description: "Penilaian mandiri BLU/D dan BUMD",
     icon: NotebookPen,
     href:
-      role === "BLUD_ADMIN" || role === "BLUD_OPERATOR"
+      role === "BLUD_ADMIN" || role === "BLUD_OPERATOR" || role === "BLU_ADMIN" || role === "BLU_OPERATOR"
         ? "/self-assessment-blu-blud"
-        : "/self-assessment-admin",
+        : "/self-assessment-bpkp",
   },
   {
     title: "Risk Register",
     description: "Pemetaan risiko yang dimiliki BLU/D dan BUMD",
     icon: ListChecks,
     href:
-      role === "BLUD_ADMIN" || role === "BLUD_OPERATOR"
-        ? "/risk-register"
+      role === "BLUD_ADMIN" || role === "BLUD_OPERATOR" || role === "BLU_ADMIN" || role === "BLU_OPERATOR"
+        ? "/risk-register-blu-blud"
         : "/risk-register-admin",
   },
 ];
+
+console.log(session)
 
   return (
     <main className="min-h-screen bg-slate-50">
@@ -51,7 +54,7 @@ const menus = [
         <div className="mb-4 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-4xl font-bold text-slate-800">
-              Selamat Datang <span className="text-blue-600">{userName} 👋</span>
+              Selamat Datang <span className="text-blue-600">{userName}👋</span>
             </h2>
 
             <p className="mt-2 text-lg text-slate-600">
@@ -65,10 +68,7 @@ const menus = [
               User Manual & FAQ
             </button>
 
-            <button className="rounded-lg bg-blue-600 px-6 py-3 text-white shadow hover:bg-blue-700">
-              <LogOut className="mr-2 inline h-4 w-4" />
-              Logout
-            </button>
+            <LogoutButton/>
           </div>
         </div>
 

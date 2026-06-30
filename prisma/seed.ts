@@ -26,14 +26,18 @@ async function main() {
     });
   }
 
-  const passwordMap = {
-    superAdmin: await hash('SuperAdmin123!'),
-    bpkpAdmin: await hash('AdminBPKP123!'),
-    reviewer: await hash('ReviewerBPKP123!'),
-    auditor: await hash('Auditor123!'),
-    bludAdmin: await hash('BludAdmin123!'),
-    bludOperator: await hash('BludOperator123!'),
-  };
+const passwordMap = {
+  superAdmin: await hash("SuperAdmin123!"),
+  bpkpAdmin: await hash("AdminBPKP123!"),
+  reviewer: await hash("ReviewerBPKP123!"),
+  auditor: await hash("Auditor123!"),
+
+  bludAdmin: await hash("BludAdmin123!"),
+  bludOperator: await hash("BludOperator123!"),
+
+  bluAdmin: await hash("BluAdmin123!"),
+  bluOperator: await hash("BluOperator123!"),
+};
 
   await prisma.user.upsert({
     where: { username: 'super.admin' },
@@ -115,53 +119,82 @@ async function main() {
     },
   });
 
-  const allBluds = await prisma.blud.findMany({ orderBy: { code: 'asc' } });
-  for (const blud of allBluds) {
-    const code = blud.code.toLowerCase();
-    await prisma.user.upsert({
-      where: { username: `${code}.admin` },
-      update: {
-        name: `${blud.name} Admin`,
-        role: UserRole.BLUD_ADMIN,
-        password: passwordMap.bludAdmin,
-        bludId: blud.id,
-        isActive: true,
-        mustChangePassword: true,
-      },
-      create: {
-        username: `${code}.admin`,
-        email: `${code}.admin@blud.local`,
-        name: `${blud.name} Admin`,
-        password: passwordMap.bludAdmin,
-        role: UserRole.BLUD_ADMIN,
-        bludId: blud.id,
-        isActive: true,
-        mustChangePassword: true,
-      },
-    });
+  const allUnits = await prisma.blud.findMany({
+  orderBy: { code: "asc" },
+});
 
-    await prisma.user.upsert({
-      where: { username: `${code}.operator` },
-      update: {
-        name: `${blud.name} Operator`,
-        role: UserRole.BLUD_OPERATOR,
-        password: passwordMap.bludOperator,
-        bludId: blud.id,
-        isActive: true,
-        mustChangePassword: true,
-      },
-      create: {
-        username: `${code}.operator`,
-        email: `${code}.operator@blud.local`,
-        name: `${blud.name} Operator`,
-        password: passwordMap.bludOperator,
-        role: UserRole.BLUD_OPERATOR,
-        bludId: blud.id,
-        isActive: true,
-        mustChangePassword: true,
-      },
-    });
-  }
+for (const unit of allUnits) {
+  const code = unit.code.toLowerCase();
+
+  const isBlu = unit.code.startsWith("BLU");
+  const isBlud = unit.code.startsWith("BLUD");
+
+  const adminRole = isBlu
+    ? UserRole.BLU_ADMIN
+    : UserRole.BLUD_ADMIN;
+
+  const operatorRole = isBlu
+    ? UserRole.BLU_OPERATOR
+    : UserRole.BLUD_OPERATOR;
+
+  const adminPassword = isBlu
+    ? passwordMap.bluAdmin
+    : passwordMap.bludAdmin;
+
+  const operatorPassword = isBlu
+    ? passwordMap.bluOperator
+    : passwordMap.bludOperator;
+
+  const emailDomain = isBlu ? "blu.local" : "blud.local";
+
+  await prisma.user.upsert({
+    where: {
+      username: `${code}.admin`,
+    },
+    update: {
+      name: `${unit.name} Admin`,
+      role: adminRole,
+      password: adminPassword,
+      bludId: unit.id,
+      isActive: true,
+      mustChangePassword: true,
+    },
+    create: {
+      username: `${code}.admin`,
+      email: `${code}.admin@${emailDomain}`,
+      name: `${unit.name} Admin`,
+      role: adminRole,
+      password: adminPassword,
+      bludId: unit.id,
+      isActive: true,
+      mustChangePassword: true,
+    },
+  });
+
+  await prisma.user.upsert({
+    where: {
+      username: `${code}.operator`,
+    },
+    update: {
+      name: `${unit.name} Operator`,
+      role: operatorRole,
+      password: operatorPassword,
+      bludId: unit.id,
+      isActive: true,
+      mustChangePassword: true,
+    },
+    create: {
+      username: `${code}.operator`,
+      email: `${code}.operator@${emailDomain}`,
+      name: `${unit.name} Operator`,
+      role: operatorRole,
+      password: operatorPassword,
+      bludId: unit.id,
+      isActive: true,
+      mustChangePassword: true,
+    },
+  });
+}
 }
 
 main()

@@ -28,7 +28,13 @@ type ParameterInputRow = {
   criteriaScore: unknown;
 };
 
-const BLUD_ROLES = new Set(["BLUD_ADMIN", "BLUD_OPERATOR"]);
+const BLUD_ROLES = new Set([
+  "BLUD_ADMIN",
+  "BLUD_OPERATOR",
+  "BLU_ADMIN",
+  "BLU_OPERATOR",
+]);
+
 const BPKP_VIEWER_ROLES = new Set([
   "BPKP",
   "BPKP_ADMIN",
@@ -189,6 +195,8 @@ function bludInputWhere() {
       { createdByRole: null },
       { createdByRole: "BLUD_OPERATOR" },
       { createdByRole: "BLUD_ADMIN" },
+      { createdByRole: "BLU_OPERATOR" },
+      { createdByRole: "BLU_ADMIN" },
     ],
   };
 }
@@ -591,7 +599,10 @@ export async function GET(request: Request) {
 
     let summary;
 
-    if (isBludViewer || (useBpkpSelfAssessmentRows && scopedBludIds.length > 0)) {
+    if (
+      isBludViewer ||
+      (useBpkpSelfAssessmentRows && scopedBludIds.length > 0)
+    ) {
       summary = {
         totalResponses: filledBludIds.length,
         totalBluds,
@@ -666,8 +677,10 @@ export async function GET(request: Request) {
         isBludScoped: isBludViewer,
         currentBludId: isBludViewer ? String(session.user.bludId || "") : null,
         currentBludName,
-        canReviewAoi: role === "BLUD_ADMIN",
-        dataSource: useBpkpSelfAssessmentRows ? "BPKP_SELF_ASSESSMENT" : "BLUD_SELF_ASSESSMENT",
+        canReviewAoi: role === "BLUD_ADMIN" || role === "BLU_ADMIN",
+        dataSource: useBpkpSelfAssessmentRows
+          ? "BPKP_SELF_ASSESSMENT"
+          : "BLUD_SELF_ASSESSMENT",
       },
     });
   } catch (error) {
