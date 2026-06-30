@@ -41,7 +41,12 @@ async function getBludOptions() {
 async function resolveBludContext(session: any, request: Request) {
   const role = String(session?.user?.role || "").toUpperCase();
 
-  if (role === "BLUD_OPERATOR" || role === "BLUD_ADMIN") {
+  if (
+    role === "BLUD_OPERATOR" ||
+    role === "BLUD_ADMIN" ||
+    role === "BLU_OPERATOR" ||
+    role === "BLU_ADMIN"
+  ) {
     if (session?.user?.bludId) {
       return prisma.blud.findUnique({
         where: { id: session.user.bludId },
@@ -193,6 +198,8 @@ function bludInputWhere() {
       { createdByRole: null },
       { createdByRole: "BLUD_OPERATOR" },
       { createdByRole: "BLUD_ADMIN" },
+      { createdByRole: "BLU_OPERATOR" },
+      { createdByRole: "BLU_ADMIN" },
     ],
   };
 }
@@ -625,7 +632,8 @@ export async function POST(request: Request) {
     if (isEvidenceRequired(criteriaScore) && documentIds.length === 0) {
       return NextResponse.json(
         {
-          message: "Upload Evidence wajib apabila level parameter lebih dari 1.",
+          message:
+            "Upload Evidence wajib apabila level parameter lebih dari 1.",
         },
         { status: 400 },
       );

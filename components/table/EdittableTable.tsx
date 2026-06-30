@@ -1621,8 +1621,9 @@ export default function EdittableTable({
   );
 
   const currentUserRole = resolvedUserRole;
-  const isOperatorBlud = currentUserRole === "BLUD_OPERATOR";
-  const isAdminBlud = currentUserRole === "BLUD_ADMIN";
+  const isOperatorBlud =
+    currentUserRole === "BLUD_OPERATOR" || currentUserRole === "BLU_OPERATOR";
+  const isAdminBlud = currentUserRole === "BLUD_ADMIN" || currentUserRole === "BLU_ADMIN";
   const isBpkp =
     currentUserRole === "BPKP" ||
     currentUserRole === "BPKP_ADMIN" ||
@@ -3195,7 +3196,7 @@ export default function EdittableTable({
               </button>
             )}
 
-            {((isBpkpSelfAssessmentMode && !showReviewAction) ||
+            {((isOperatorBlud && !showReviewAction) ||
               (!showReviewAction &&
                 isEditable &&
                 !isOperatorWaitingAdminReview &&

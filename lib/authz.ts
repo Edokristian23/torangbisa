@@ -1,8 +1,18 @@
-import { UserRole } from '@prisma/client';
+import { UserRole } from "@prisma/client";
 
-export const ADMIN_ROLES: UserRole[] = ['SUPER_ADMIN', 'BPKP_ADMIN'];
-export const REVIEW_ROLES: UserRole[] = ['SUPER_ADMIN', 'BPKP_ADMIN', 'BPKP_REVIEWER', 'AUDITOR'];
-export const BLUD_ROLES: UserRole[] = ['BLUD_ADMIN', 'BLUD_OPERATOR'];
+export const ADMIN_ROLES: UserRole[] = ["SUPER_ADMIN", "BPKP_ADMIN"];
+export const REVIEW_ROLES: UserRole[] = [
+  "SUPER_ADMIN",
+  "BPKP_ADMIN",
+  "BPKP_REVIEWER",
+  "AUDITOR",
+];
+export const BLUD_ROLES: UserRole[] = [
+  "BLUD_ADMIN",
+  "BLUD_OPERATOR",
+  "BLU_ADMIN",
+  "BLU_OPERATOR",
+];
 
 export function isAdminRole(role?: UserRole | null) {
   return !!role && ADMIN_ROLES.includes(role);
