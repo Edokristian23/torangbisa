@@ -274,7 +274,6 @@ export async function GET(request: Request) {
       }
 
       scopedBludIds = [String(session.user.bludId)];
-
       const currentBlud = await prisma.blud.findUnique({
         where: { id: String(session.user.bludId) },
         select: { name: true },
@@ -353,6 +352,10 @@ export async function GET(request: Request) {
           },
         },
       },
+    });
+
+    const periods = await prisma.assessmentPeriod.findMany({
+      where: scopedPeriodWhere,
     });
 
     const allRowsForFilledBluds = await prisma.assessmentResponse.findMany({

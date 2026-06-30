@@ -1223,7 +1223,7 @@ export default function EnterpriseAssessmentDashboard() {
     "RSUD Labuha",
     "RSUD Jailolo",
     "RSUD Tidore",
-    "Bandara Sultan Babullah",
+    "Sultan Babullah",
     "Universitas Khairun"
   ];
 
